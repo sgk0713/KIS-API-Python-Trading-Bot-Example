@@ -16,11 +16,12 @@ import time
 import datetime
 import os
 import math
+import threading
 import yfinance as yf
 import pytz
 import tempfile
-import shutil  
-import pandas as pd   
+import shutil
+import pandas as pd
 import numpy as np
 import volatility_engine as ve  
 
@@ -573,11 +574,21 @@ class KoreaInvestmentBroker:
         tr_id = "TTTT1002U" if side == "BUY" else "TTTT1006U"
         excg_cd = self._get_exchange_code(ticker, target_api="ORDER")
 
+        # 모의투자는 지정가(00)만 지원 — LOC/MOC를 마감 직전 LIMIT으로 지연 발송
+        if self.is_mock and order_type in ["LOC", "MOC"]:
+            print(f"⚠️ [Mock] {order_type} → 마감 직전 LIMIT 지연 발송 예약")
+            self._schedule_mock_loc_order(ticker, side, qty, price)
+            return {'rt_cd': '0', 'msg1': f'[Mock] {order_type} → 마감 직전 LIMIT 예약 완료', 'odno': 'MOCK_SCHEDULED'}
+
+        if self.is_mock and order_type in ["LOO", "MOO"]:
+            print(f"⚠️ [Mock] {order_type} → LIMIT fallback")
+            order_type = "LIMIT"
+
         if order_type == "LOC": ord_dvsn = "34"
         elif order_type == "MOC": ord_dvsn = "33"
         elif order_type == "LOO": ord_dvsn = "02"
         elif order_type == "MOO": ord_dvsn = "31"
-        elif order_type == "AFTER_LIMIT": ord_dvsn = "00"  
+        elif order_type == "AFTER_LIMIT": ord_dvsn = "00"
         else: ord_dvsn = "00"
 
         final_price = self._ceil_2(price)
@@ -596,6 +607,28 @@ class KoreaInvestmentBroker:
         odno = output.get('ODNO', '') if isinstance(output, dict) else ''
         
         return {'rt_cd': rt_cd, 'msg1': msg1, 'odno': odno}
+
+    def _schedule_mock_loc_order(self, ticker, side, qty, price):
+        """모의투자 LOC/MOC 주문을 마감 5분 전(15:55 EST)까지 대기 후 LIMIT으로 발송"""
+        def _delayed_send():
+            est = pytz.timezone('US/Eastern')
+            now_est = datetime.datetime.now(est)
+            target_time = now_est.replace(hour=15, minute=55, second=0, microsecond=0)
+
+            if now_est >= target_time:
+                # 이미 15:55 이후면 즉시 발송
+                print(f"⏰ [Mock LOC] {ticker} {side} {qty}주 → 마감 임박, 즉시 LIMIT 발송")
+            else:
+                wait_sec = (target_time - now_est).total_seconds()
+                print(f"⏰ [Mock LOC] {ticker} {side} {qty}주 → {int(wait_sec)}초 후 (15:55 EST) LIMIT 발송 예정")
+                time.sleep(wait_sec)
+                print(f"⏰ [Mock LOC] {ticker} {side} {qty}주 → 대기 완료, LIMIT 발송")
+
+            res = self.send_order(ticker, side, qty, price, "LIMIT")
+            print(f"⏰ [Mock LOC] {ticker} {side} {qty}주 결과: {res}")
+
+        t = threading.Thread(target=_delayed_send, daemon=True)
+        t.start()
 
     def cancel_order(self, ticker, order_id):
         excg_cd = self._get_exchange_code(ticker, target_api="ORDER")
