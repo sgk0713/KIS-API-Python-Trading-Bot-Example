@@ -8,9 +8,9 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
-PYTHON=${PYTHON:-python3}
 VENV_DIR="venv"
 REQUIREMENTS="requests yfinance pytz pandas_market_calendars python-dotenv pillow python-telegram-bot[job-queue] peewee"
+MIN_MINOR=10
 
 # ----------------------------------------------------------
 # 1) 이미 실행 중인지 확인
@@ -22,22 +22,49 @@ if [ -f .bot_pid ] && kill -0 "$(cat .bot_pid)" 2>/dev/null; then
 fi
 
 # ----------------------------------------------------------
-# 2) Python 버전 확인
+# 2) Python 탐색 (기존 venv > PYTHON 환경변수 > 시스템 최신 버전)
 # ----------------------------------------------------------
-if ! command -v "$PYTHON" &>/dev/null; then
-    echo "[ERROR] $PYTHON 을 찾을 수 없습니다. Python 3.10+ 를 설치해주세요."
+find_best_python() {
+    # 기존 venv가 있으면 그대로 사용
+    if [ -x "$VENV_DIR/bin/python" ]; then
+        echo "$VENV_DIR/bin/python"
+        return
+    fi
+    # PYTHON 환경변수가 지정되어 있으면 우선 사용
+    if [ -n "$PYTHON" ] && command -v "$PYTHON" &>/dev/null; then
+        echo "$PYTHON"
+        return
+    fi
+    # 시스템에서 python3.13 ~ python3.10 순으로 탐색
+    for v in 13 12 11 $MIN_MINOR; do
+        if command -v "python3.$v" &>/dev/null; then
+            echo "python3.$v"
+            return
+        fi
+    done
+    # fallback
+    if command -v python3 &>/dev/null; then
+        echo "python3"
+        return
+    fi
+}
+
+PYTHON=$(find_best_python)
+
+if [ -z "$PYTHON" ]; then
+    echo "[ERROR] Python을 찾을 수 없습니다. Python 3.${MIN_MINOR}+ 를 설치해주세요."
     exit 1
 fi
 
 PY_VERSION=$("$PYTHON" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-PY_MAJOR=$("$PYTHON" -c 'import sys; print(sys.version_info.major)')
-PY_MINOR=$("$PYTHON" -c 'import sys; print(sys.version_info.minor)')
+PY_MINOR_VER=$("$PYTHON" -c 'import sys; print(sys.version_info.minor)')
 
-if [ "$PY_MAJOR" -lt 3 ] || { [ "$PY_MAJOR" -eq 3 ] && [ "$PY_MINOR" -lt 10 ]; }; then
-    echo "[ERROR] Python 3.10+ 가 필요합니다. (현재: $PY_VERSION)"
+if [ "$PY_MINOR_VER" -lt "$MIN_MINOR" ]; then
+    echo "[ERROR] Python 3.${MIN_MINOR}+ 가 필요합니다. (감지됨: $PY_VERSION)"
+    echo "        python3.${MIN_MINOR} 이상을 설치하거나, PYTHON=python3.12 ./start.sh 로 지정해주세요."
     exit 1
 fi
-echo "[OK] Python $PY_VERSION"
+echo "[OK] Python $PY_VERSION ($PYTHON)"
 
 # ----------------------------------------------------------
 # 3) 가상환경 생성 (없으면)
