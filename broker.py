@@ -91,6 +91,7 @@ class KoreaInvestmentBroker:
         "TTTS3035R": "VTTS3035R",
         "TTTS3018R": "VTTS3018R",
         "TTTS3007R": "VTTS3007R",
+        "TTTS3001R": "VTTS3001R",
     }
 
     def _get_header(self, tr_id):
@@ -235,9 +236,11 @@ class KoreaInvestmentBroker:
 
         # 모의투자 fallback: 기존 API들이 cash=0 반환 시 매수가능금액 조회 API 사용
         if cash <= 0 and self.is_mock:
+            # 1. 일반 매수가능금액 조회 (TTTS3007R)
             params_ps = {
                 "CANO": self.cano, "ACNT_PRDT_CD": self.acnt_prdt_cd,
-                "OVRS_EXCG_CD": "NASD", "OVRS_ORD_UNPR": "50", "ITEM_CD": "AAPL"
+                "OVRS_EXCG_CD": "NASD", "OVRS_ORD_UNPR": "50", "ITEM_CD": "AAPL",
+                "TR_CRCY_CD": "USD"
             }
             res_ps = self._call_api("TTTS3007R", "/uapi/overseas-stock/v1/trading/inquire-psamount", "GET", params_ps)
             if res_ps.get('rt_cd') == '0':
@@ -246,6 +249,21 @@ class KoreaInvestmentBroker:
                 new_cash = self._safe_float(ps_out.get('ovrs_ord_psbl_amt', 0))
                 if new_cash > cash:
                     cash = new_cash
+
+            # 2. 통합증거금 매수가능금액 조회 (TTTS3001R) - 모의투자 원화 예수금 대응
+            if cash <= 0:
+                params_uni = {
+                    "CANO": self.cano, "ACNT_PRDT_CD": self.acnt_prdt_cd,
+                    "OVRS_EXCG_CD": "NASD", "OVRS_ORD_UNPR": "50", "ITEM_CD": "AAPL",
+                    "TR_CRCY_CD": "USD"
+                }
+                res_uni = self._call_api("TTTS3001R", "/uapi/overseas-stock/v1/trading/inquire-uni-psamount", "GET", params_uni)
+                if res_uni.get('rt_cd') == '0':
+                    api_success = True
+                    uni_out = res_uni.get('output', {})
+                    new_cash = self._safe_float(uni_out.get('ovrs_ord_psbl_amt', 0))
+                    if new_cash > cash:
+                        cash = new_cash
 
         if api_success:
             return cash, holdings
