@@ -1,0 +1,6 @@
+TELEGRAM_TOKEN=여기에_텔레그램_봇_토큰
+ADMIN_CHAT_ID=여기에_텔레그램_채팅_ID
+APP_KEY=여기에_한투_API_앱키
+APP_SECRET=여기에_한투_API_시크릿키
+CANO=여기에_계좌번호
+ACNT_PRDT_CD=01
