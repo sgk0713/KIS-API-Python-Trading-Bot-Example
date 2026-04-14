@@ -44,10 +44,13 @@
 ✔️ 한국투자증권 Open API 발급 (App Key, App Secret)
 ✔️ Telegram Bot Token 및 Chat ID
 
-📌 **2. 패키지 설치**
+📌 **2. upstream 설정 (최초 1회)**
+👉 git remote add upstream https://github.com/pipios4006-boop/KIS-API-Python-Trading-Bot-Example.git
+
+📌 **3. 패키지 설치**
 👉 pip install requests yfinance pytz pandas_market_calendars python-dotenv pillow "python-telegram-bot[job-queue]"
 
-📌 **3. 환경 변수 설정 (.env 파일 생성)**
+📌 **4. 환경 변수 설정 (.env 파일 생성)**
 프로젝트 최상단 폴더에 .env 파일을 만들고 아래 양식에 맞게 본인의 키를 입력합니다.
 👉 TELEGRAM_TOKEN=나의_텔레그램_봇_토큰
 👉 ADMIN_CHAT_ID=나의_텔레그램_채팅방_ID숫자
@@ -56,7 +59,7 @@
 👉 CANO=나의_계좌번호_앞8자리
 👉 ACNT_PRDT_CD=01 또는 22
 
-📌 **4. 프로그램 실행**
+📌 **5. 프로그램 실행**
 👉 python main.py
 (권장: 서버 환경에서는 nohup python main.py & 명령어를 사용하여 백그라운드에서 24시간 가동되도록 설정하세요.)
 
