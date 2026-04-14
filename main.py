@@ -51,7 +51,6 @@ TICKER_BASE_MAP = {
     "SOXL": "SOXX",
     "TQQQ": "QQQ",
     "TSLL": "TSLA",
-    "FNGU": "FNGS",
     "BULZ": "FNGS"
 }
 

@@ -44,13 +44,13 @@ class ConfigManager:
             "AVWAP_HYBRID_CFG": "data/avwap_hybrid.json"
         }
         
-        self.DEFAULT_SEED = {"SOXL": 6720.0, "TQQQ": 6720.0}
-        self.DEFAULT_SPLIT = {"SOXL": 40.0, "TQQQ": 40.0}
-        self.DEFAULT_TARGET = {"SOXL": 12.0, "TQQQ": 10.0}
-        self.DEFAULT_COMPOUND = {"SOXL": 70.0, "TQQQ": 70.0}
-        self.DEFAULT_VERSION = {"SOXL": "V14", "TQQQ": "V14"}
-        
-        self.DEFAULT_SNIPER_MULTIPLIER = {"SOXL": 1.0, "TQQQ": 0.9}
+        self.DEFAULT_SEED = {"SOXL": 6720.0, "TQQQ": 6720.0, "BULZ": 6720.0}
+        self.DEFAULT_SPLIT = {"SOXL": 40.0, "TQQQ": 40.0, "BULZ": 40.0}
+        self.DEFAULT_TARGET = {"SOXL": 12.0, "TQQQ": 10.0, "BULZ": 10.0}
+        self.DEFAULT_COMPOUND = {"SOXL": 70.0, "TQQQ": 70.0, "BULZ": 70.0}
+        self.DEFAULT_VERSION = {"SOXL": "V14", "TQQQ": "V14", "BULZ": "V14"}
+
+        self.DEFAULT_SNIPER_MULTIPLIER = {"SOXL": 1.0, "TQQQ": 0.9, "BULZ": 1.0}
         
         # NEW: [V25.19 핫픽스] 에스크로 고속 인메모리 캐시 신설
         self._escrow_cache = {}

@@ -212,7 +212,7 @@ async def scheduled_force_reset(context):
                     curr_ret = (curr_p - actual_avg) / actual_avg * 100.0
                     
                     # 🚨 [V25.02 핵심 수술] 가변 exit_target 의존성 100% 적출 및 절대 하드스탑 팩트 이식
-                    exit_threshold = -15.0 if t == "TQQQ" else -20.0
+                    exit_threshold = -15.0 if t in ("TQQQ", "BULZ") else -20.0
                     
                     if curr_ret >= exit_threshold:
                         cfg.set_reverse_state(t, False, 0, 0.0)

@@ -337,7 +337,7 @@ class TelegramController:
                     except Exception as e:
                         logging.debug(f"YF 정규장 종가 롤오버 스캔 실패 ({t}): {e}")
 
-                idx_ticker = "SOXX" if t == "SOXL" else "QQQ"
+                idx_ticker = "SOXX" if t == "SOXL" else ("FNGS" if t == "BULZ" else "QQQ")
                 dynamic_pct_obj = await asyncio.to_thread(self.broker.get_dynamic_sniper_target, idx_ticker)
                 dynamic_pct = float(dynamic_pct_obj) if dynamic_pct_obj is not None else (8.79 if t == "SOXL" else 4.95)
                 
@@ -883,7 +883,7 @@ class TelegramController:
         report += "🟥 <code>25.00 이상 </code> : 패닉 셀링 (ON)\n\n"
         
         for t in active_tickers:
-            idx_ticker = "SOXX" if t == "SOXL" else "QQQ"
+            idx_ticker = "SOXX" if t == "SOXL" else ("FNGS" if t == "BULZ" else "QQQ")
             dynamic_pct_obj = await asyncio.to_thread(self.broker.get_dynamic_sniper_target, idx_ticker)
             
             if dynamic_pct_obj and hasattr(dynamic_pct_obj, 'metric_val'):

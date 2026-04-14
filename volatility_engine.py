@@ -276,6 +276,9 @@ class VolatilityEngine:
             elif ticker == "SOXL":
                 _, weight, _, _ = get_soxl_target_drop_full()
                 return {'weight': float(weight)}
+            elif ticker == "BULZ":
+                _, weight, _, _ = get_tqqq_target_drop_full()
+                return {'weight': float(weight)}
             else:
                 return {'weight': 1.0}
         except Exception as e:

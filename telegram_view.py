@@ -573,8 +573,10 @@ class TelegramView:
 
         keyboard = []
         if not is_history:
-            other = "TQQQ" if ticker == "SOXL" else "SOXL"
-            keyboard.append([InlineKeyboardButton(f"🔄 {other} 장부 조회", callback_data=f"REC:VIEW:{other}")])
+            all_tickers = ["SOXL", "TQQQ", "BULZ"]
+            for other in all_tickers:
+                if other != ticker:
+                    keyboard.append([InlineKeyboardButton(f"🔄 {other} 장부 조회", callback_data=f"REC:VIEW:{other}")])
             keyboard.append([InlineKeyboardButton(f"🗄️ {ticker} V-REV 큐(Queue) 정밀 관리", callback_data=f"QUEUE:VIEW:{ticker}")])
             keyboard.append([InlineKeyboardButton("🔙 장부 대시보드 업데이트", callback_data=f"REC:SYNC:{ticker}")])
         else:
@@ -645,6 +647,7 @@ class TelegramView:
         keyboard = [
             [InlineKeyboardButton("🔥 SOXL 전용", callback_data="TICKER:SOXL")],
             [InlineKeyboardButton("🚀 TQQQ 전용", callback_data="TICKER:TQQQ")],
+            [InlineKeyboardButton("⚡ BULZ 전용", callback_data="TICKER:BULZ")],
             [InlineKeyboardButton("💎 SOXL + TQQQ 통합", callback_data="TICKER:ALL")]
         ]
         return f"🔄 <b>[ 운용 종목 선택 ]</b>\n현재: <b>{', '.join(current_tickers)}</b>", InlineKeyboardMarkup(keyboard)
