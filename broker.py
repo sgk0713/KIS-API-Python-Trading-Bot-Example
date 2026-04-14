@@ -30,7 +30,8 @@ class KoreaInvestmentBroker:
         self.app_secret = app_secret
         self.cano = cano
         self.acnt_prdt_cd = acnt_prdt_cd
-        self.base_url = "https://openapi.koreainvestment.com:9443"
+        self.is_mock = acnt_prdt_cd != "01"
+        self.base_url = "https://openapivts.koreainvestment.com:29443" if self.is_mock else "https://openapi.koreainvestment.com:9443"
         self.token_file = f"data/token_{cano}.dat" 
         self.token = None
         self._excg_cd_cache = {} 
@@ -81,7 +82,19 @@ class KoreaInvestmentBroker:
         except Exception as e:
             print(f"❌ [Broker] 토큰 통신 에러: {e}")
 
+    _MOCK_TR_MAP = {
+        "CTRP6504R": "VTRP6504R",
+        "TTTS3012R": "VTTS3012R",
+        "TTTT1002U": "VTTT1002U",
+        "TTTT1006U": "VTTT1006U",
+        "TTTS3035R": "VTTS3035R",
+        "TTTS3018R": "VTTS3018R",
+        "TTTS3007R": "VTTS3007R",
+    }
+
     def _get_header(self, tr_id):
+        if self.is_mock:
+            tr_id = self._MOCK_TR_MAP.get(tr_id, tr_id)
         return {
             "content-type": "application/json; charset=utf-8",
             "authorization": f"Bearer {self.token}",
@@ -169,6 +182,7 @@ class KoreaInvestmentBroker:
         if not dynamic_success:
             if ticker == "SOXL": price_cd, order_cd = "AMS", "AMEX"
             elif ticker == "TQQQ": price_cd, order_cd = "NAS", "NASD"
+            elif ticker == "BULZ": price_cd, order_cd = "AMS", "AMEX"
 
         self._excg_cd_cache[ticker] = {'PRICE': price_cd, 'ORDER': order_cd}
         return price_cd if target_api == "PRICE" else order_cd
@@ -184,12 +198,15 @@ class KoreaInvestmentBroker:
         if res.get('rt_cd') == '0':
             api_success = True
             o2 = res.get('output2', {})
-            if isinstance(o2, list) and len(o2) > 0: o2 = o2[0]
-            
-            dncl_amt = self._safe_float(o2.get('frcr_dncl_amt_2', 0))       
-            sll_amt = self._safe_float(o2.get('frcr_sll_amt_smtl', 0))      
-            buy_amt = self._safe_float(o2.get('frcr_buy_amt_smtl', 0))      
-            
+            if isinstance(o2, list):
+                # 통화별 리스트에서 USD 항목을 찾아 사용
+                usd_entry = next((item for item in o2 if item.get('crcy_cd') == 'USD'), None)
+                o2 = usd_entry if usd_entry else (o2[0] if len(o2) > 0 else {})
+
+            dncl_amt = self._safe_float(o2.get('frcr_dncl_amt_2', 0))
+            sll_amt = self._safe_float(o2.get('frcr_sll_amt_smtl', 0))
+            buy_amt = self._safe_float(o2.get('frcr_buy_amt_smtl', 0))
+
             raw_bp = dncl_amt + sll_amt - buy_amt
             cash = math.floor((raw_bp * 0.9945) * 100) / 100.0              
 
@@ -212,9 +229,23 @@ class KoreaInvestmentBroker:
                     qty = int(self._safe_float(item.get('ovrs_cblc_qty', 0)))
                     ord_psbl_qty = int(self._safe_float(item.get('ord_psbl_qty', qty)))
                     avg = self._safe_float(item.get('pchs_avg_pric', 0))
-                    if qty > 0 and ticker not in holdings: 
+                    if qty > 0 and ticker not in holdings:
                         holdings[ticker] = {'qty': qty, 'ord_psbl_qty': ord_psbl_qty, 'avg': avg}
-        
+
+        # 모의투자 fallback: 기존 API들이 cash=0 반환 시 매수가능금액 조회 API 사용
+        if cash <= 0 and self.is_mock:
+            params_ps = {
+                "CANO": self.cano, "ACNT_PRDT_CD": self.acnt_prdt_cd,
+                "OVRS_EXCG_CD": "NASD", "OVRS_ORD_UNPR": "50", "ITEM_CD": "AAPL"
+            }
+            res_ps = self._call_api("TTTS3007R", "/uapi/overseas-stock/v1/trading/inquire-psamount", "GET", params_ps)
+            if res_ps.get('rt_cd') == '0':
+                api_success = True
+                ps_out = res_ps.get('output', {})
+                new_cash = self._safe_float(ps_out.get('ovrs_ord_psbl_amt', 0))
+                if new_cash > cash:
+                    cash = new_cash
+
         if api_success:
             return cash, holdings
         else:
