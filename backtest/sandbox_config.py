@@ -160,3 +160,21 @@ class BacktestConfig(ConfigManager):
     def get_total_locked_cash(self, exclude_ticker=None):
         # 단일 티커 백테스트 — 항상 0
         return 0.0
+
+    # ==========================================================
+    # 부모가 DEFAULT_* 인스턴스 속성 접근 시 AttributeError 나는 setter 들 스텁
+    # (부모 __init__ 미호출로 DEFAULT_COMPOUND/SPLIT/VERSION/SNIPER_MULTIPLIER 없음)
+    # 백테스트는 파라미터를 재설정하지 않으므로 무해한 no-op 으로 충분.
+    # 단, set_seed 는 archive_graduation 이 실제로 사용하므로 별도 구현됨 (위).
+    # ==========================================================
+    def set_sniper_multiplier(self, ticker, value):
+        pass
+
+    def set_compound_rate(self, ticker, value):
+        self._bt_compound = float(value)
+
+    def set_split_count(self, ticker, value):
+        self._bt_split = int(value)
+
+    def set_version(self, ticker, value):
+        pass  # 백테스트는 V14 고정
