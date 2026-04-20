@@ -407,26 +407,24 @@ class ConfigManager:
     def increment_reverse_day(self, ticker):
         state = self.get_reverse_state(ticker)
         if state.get("is_active"):
-            est = pytz.timezone('US/Eastern')
-            now_est = datetime.datetime.now(est)
-            today_est_str = now_est.strftime('%Y-%m-%d')
-            
-            if state.get("last_update_date") != today_est_str:
-                is_trading_day = False
+            # BROKER-aware: KIS면 US/Eastern+NYSE, KIWOOM이면 KST+XKRX
+            import market_context as mc
+            now_market = mc.now()
+            today_market_str = now_market.strftime('%Y-%m-%d')
+
+            if state.get("last_update_date") != today_market_str:
                 try:
-                    nyse = mcal.get_calendar('NYSE')
-                    schedule = nyse.schedule(start_date=now_est.date(), end_date=now_est.date())
-                    is_trading_day = not schedule.empty
+                    is_trading_day = mc.is_trading_day(now_market.date())
                 except Exception as e:
                     print(f"⚠️ [Config] 달력 라이브러리 에러 발생. 평일 강제 개장 처리합니다: {e}")
-                    is_trading_day = now_est.weekday() < 5
-                
+                    is_trading_day = now_market.weekday() < 5
+
                 if is_trading_day:
                     new_day = state.get("day_count", 0) + 1
-                    self.set_reverse_state(ticker, True, new_day, state.get("exit_target", 0.0), today_est_str)
+                    self.set_reverse_state(ticker, True, new_day, state.get("exit_target", 0.0), today_market_str)
                     return True
                 else:
-                    self.set_reverse_state(ticker, True, state.get("day_count", 0), state.get("exit_target", 0.0), today_est_str)
+                    self.set_reverse_state(ticker, True, state.get("day_count", 0), state.get("exit_target", 0.0), today_market_str)
                     return False
         return False
 

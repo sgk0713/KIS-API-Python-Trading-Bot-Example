@@ -98,6 +98,123 @@ def _merge_star_sell_to_target(orders):
     return filtered
 
 
+# ==========================================================
+# KR 2x 레버리지 기준 리버스 탈출 임계치
+# ----------------------------------------------------------
+# 원본 US: TQQQ/BULZ(3x) -15% / 그 외(3x) -20%
+# KR: 418660(2x NASDAQ) -15% (3x 대비 덜 변동하니 조금 더 빨리 탈출로 조정)
+# ==========================================================
+_KR_REVERSE_EXIT_THRESHOLD = {
+    "418660": -15.0,  # TIGER 미국나스닥100레버리지(2x)
+}
+_KR_REVERSE_EXIT_DEFAULT = -18.0  # 다른 KR 2x 추가 시 디폴트
+
+
+def _get_kr_exit_threshold(ticker):
+    return _KR_REVERSE_EXIT_THRESHOLD.get(ticker, _KR_REVERSE_EXIT_DEFAULT)
+
+
+async def scheduled_kr_force_reset(context):
+    """
+    KRX 장 마감 후 17:00 KST 평일 — 시스템 일일 초기화 및 리버스 관리.
+
+    원본 `scheduler_core.scheduled_force_reset` 을 KR 맥락으로 이식:
+      1) 매매 잠금(locks) 전부 해제 → 다음날 09:05 스케줄러가 자유롭게 주문 가능
+      2) 각 활성 KR 티커별로 리버스 상태 확인
+         - 리버스 중이면 현재가 vs 평단 수익률 계산
+         - 수익률 ≥ exit_threshold (418660=-15%): 리버스 모드 확정 탈출 + 장부 정상화
+         - 아니면 cfg.increment_reverse_day() 로 day_count 증가
+      3) 리버스 아닌 티커도 increment_reverse_day 호출 (no-op이지만 관례 유지)
+    """
+    now = datetime.datetime.now(_KST)
+    chat_id = context.job.chat_id
+
+    if not is_kr_trading_day():
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="⛔ <b>오늘은 KRX 휴장일입니다. 시스템 초기화 및 리버스 day 증가 스킵.</b>",
+            parse_mode='HTML',
+        )
+        return
+
+    app_data = context.job.data
+    cfg = app_data['cfg']
+    broker = app_data['broker']
+    tx_lock = app_data['tx_lock']
+
+    try:
+        # 매매 잠금 해제 (다음날 09:05 스케줄러가 재진입 가능하도록)
+        cfg.reset_locks()
+        for t in cfg.get_active_tickers():
+            if hasattr(cfg, 'set_order_locked'):
+                cfg.set_order_locked(t, False)
+
+        async with tx_lock:
+            _, holdings = broker.get_account_balance()
+        if holdings is None:
+            holdings = {}
+
+        msg_addons = ""
+
+        for t in cfg.get_active_tickers():
+            if not _is_kr_ticker(t):
+                continue
+
+            rev_state = cfg.get_reverse_state(t)
+
+            if rev_state.get("is_active"):
+                h_data = holdings.get(t) or {}
+                actual_avg = float(h_data.get('avg') or 0.0)
+
+                curr_p = await asyncio.to_thread(broker.get_current_price, t)
+                curr_p = float(curr_p or 0.0)
+
+                if curr_p > 0 and actual_avg > 0:
+                    curr_ret = (curr_p - actual_avg) / actual_avg * 100.0
+                    exit_threshold = _get_kr_exit_threshold(t)
+
+                    if curr_ret >= exit_threshold:
+                        # 🌤️ 리버스 확정 탈출
+                        cfg.set_reverse_state(t, False, 0, 0.0)
+                        cfg.clear_escrow_cash(t)
+
+                        ledger_data = cfg.get_ledger()
+                        changed = False
+                        for lr in ledger_data:
+                            if lr.get('ticker') == t and lr.get('is_reverse', False):
+                                lr['is_reverse'] = False
+                                changed = True
+                        if changed:
+                            cfg._save_json(cfg.FILES["LEDGER"], ledger_data)
+
+                        msg_addons += (
+                            f"\n🌤️ <b>[{t}] 리버스 확정 탈출!</b> "
+                            f"(수익률 {curr_ret:.2f}% ≥ 기준 {exit_threshold:.1f}%)\n"
+                            f"▫️ V14 본대 복귀 완료"
+                        )
+                    else:
+                        cfg.increment_reverse_day(t)
+                        new_state = cfg.get_reverse_state(t)
+                        msg_addons += (
+                            f"\n🔄 <b>[{t}] 리버스 {new_state.get('day_count', 0)}일차</b> "
+                            f"(수익률 {curr_ret:.2f}% < 기준 {exit_threshold:.1f}%)"
+                        )
+                else:
+                    cfg.increment_reverse_day(t)
+            else:
+                cfg.increment_reverse_day(t)
+
+        final_msg = f"🔓 <b>[17:00 KST] 시스템 일일 초기화 완료 (매매 잠금 해제)</b>{msg_addons}"
+        await context.bot.send_message(chat_id=chat_id, text=final_msg, parse_mode='HTML')
+
+    except Exception as e:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"🚨 <b>KR 시스템 초기화 중 에러:</b> {e}",
+            parse_mode='HTML',
+        )
+
+
 async def scheduled_kr_auto_sync(context):
     """
     KRX 개장 직전(08:45 KST) 장부-잔고 자동 동기화.

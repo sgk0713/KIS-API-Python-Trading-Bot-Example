@@ -257,7 +257,11 @@ def main():
 
         # 2. 시장별 스케줄러 — BROKER에 따라 분기
         if BROKER_CHOICE == "KIWOOM":
-            from scheduler_trade_kr import scheduled_kr_regular_trade, scheduled_kr_auto_sync
+            from scheduler_trade_kr import (
+                scheduled_kr_regular_trade,
+                scheduled_kr_auto_sync,
+                scheduled_kr_force_reset,
+            )
             # 08:45 KST — 장부 자동 동기화 (졸업 감지 + 평단가 교정)
             jq.run_daily(
                 scheduled_kr_auto_sync,
@@ -274,7 +278,15 @@ def main():
                 chat_id=cfg.get_chat_id(),
                 data=app_data,
             )
-            print("ℹ️  [스케줄러] KIWOOM 모드 — 08:45 auto_sync + 09:05 일일 주문 장전 등록")
+            # 17:00 KST — 일일 초기화 & 리버스 관리 (매매 잠금 해제, day_count 증가, 탈출 체크)
+            jq.run_daily(
+                scheduled_kr_force_reset,
+                time=datetime.time(17, 0, tzinfo=kst),
+                days=(0, 1, 2, 3, 4),
+                chat_id=cfg.get_chat_id(),
+                data=app_data,
+            )
+            print("ℹ️  [스케줄러] KIWOOM 모드 — 08:45 sync + 09:05 장전 + 17:00 force_reset 등록")
             print("   US 전용 스케줄러(volatility_scan / vwap / sniper / after-market 등)는 미등록")
         else:
             # === KIS 전용 (기존 동작 유지) ===

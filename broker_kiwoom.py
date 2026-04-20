@@ -381,24 +381,30 @@ class KiwoomBroker:
     # 주문
     # ==========================================================
     def send_order(self, ticker, side, qty, price, order_type="LIMIT"):
-        # LOC/MOC → 15:25 KST 지연 LIMIT 발송
+        # LOC/MOC → 15:25 KST 지연 발송 (각자 의도 유지)
         if order_type in ("LOC", "MOC"):
-            print(f"⚠️ [KiwoomBroker] {order_type} → 15:25 KST 지연 LIMIT 예약 ({ticker} {side} {qty})")
-            self._schedule_closing_limit_order(ticker, side, qty, price)
-            return {'rt_cd': '0', 'msg1': f'[Kiwoom] {order_type} → 마감 직전 LIMIT 예약', 'odno': 'KW_SCHEDULED'}
+            print(f"⚠️ [KiwoomBroker] {order_type} → 15:25 KST 지연 예약 ({ticker} {side} {qty})")
+            self._schedule_closing_order(ticker, side, qty, price, original_type=order_type)
+            return {'rt_cd': '0', 'msg1': f'[Kiwoom] {order_type} → 마감 직전 예약', 'odno': 'KW_SCHEDULED'}
         if order_type in ("LOO", "MOO"):
             order_type = "LIMIT"
 
         api_id = _API_IDS["ORDER_BUY"] if side == "BUY" else _API_IDS["ORDER_SELL"]
-        final_price = self._round_to_krw_tick(price)
+
+        # 시장가/지정가 분기
+        if order_type == "MARKET":
+            ord_dvsn = _KRX_ORD_MARKET  # "03"
+            final_price = 0  # 시장가는 가격 없음
+        else:  # LIMIT 및 그 외 모든 케이스
+            ord_dvsn = _KRX_ORD_LIMIT  # "00"
+            final_price = self._round_to_krw_tick(price)
 
         body = {
-            # TODO: 키움 주문 body 필드 정확히 확정 후 교정
             "dmst_stex_tp": "KRX",
             "stk_cd": str(ticker),
             "ord_qty": str(int(qty)),
             "ord_uv": str(int(final_price)),
-            "trde_tp": _KRX_ORD_LIMIT,
+            "trde_tp": ord_dvsn,
             "cond_uv": "",
         }
         res = self._call_api(api_id, _ORDER_PATH, "POST", body=body)
@@ -407,19 +413,28 @@ class KiwoomBroker:
         odno = res.get('ord_no', '') or res.get('odno', '')
         return {'rt_cd': rt_cd, 'msg1': msg1, 'odno': odno}
 
-    def _schedule_closing_limit_order(self, ticker, side, qty, price):
+    def _schedule_closing_order(self, ticker, side, qty, price, original_type="LOC"):
+        """15:25 KST에 깨어나 LOC/MOC 본연의 의도대로 발송.
+          LOC → 지정가 (가격 유지) / MOC → 시장가 (가격 0)"""
         def _delayed():
             kst = pytz.timezone('Asia/Seoul')
             now = datetime.datetime.now(kst)
             target = now.replace(hour=15, minute=25, second=0, microsecond=0)
             if now < target:
                 wait = (target - now).total_seconds()
-                print(f"⏰ [Kiwoom 마감LIMIT] {ticker} {side} {qty}주 → {int(wait)}초 후 발송 예정")
+                print(f"⏰ [Kiwoom 마감{original_type}] {ticker} {side} {qty}주 → {int(wait)}초 후 발송 예정")
                 time.sleep(wait)
-            print(f"⏰ [Kiwoom 마감LIMIT] {ticker} {side} {qty}주 → LIMIT 발송")
-            res = self.send_order(ticker, side, qty, price, "LIMIT")
-            print(f"⏰ [Kiwoom 마감LIMIT] 결과: {res}")
+            if original_type == "MOC":
+                print(f"⏰ [Kiwoom 마감MOC] {ticker} {side} {qty}주 → 시장가 발송")
+                res = self.send_order(ticker, side, qty, 0, "MARKET")
+            else:  # LOC
+                print(f"⏰ [Kiwoom 마감LOC] {ticker} {side} {qty}주 @ {int(price):,}원 → LIMIT 발송")
+                res = self.send_order(ticker, side, qty, price, "LIMIT")
+            print(f"⏰ [Kiwoom 마감{original_type}] 결과: {res}")
         threading.Thread(target=_delayed, daemon=True).start()
+
+    # 하위 호환성 — 예전 이름으로도 호출 가능
+    _schedule_closing_limit_order = _schedule_closing_order
 
     def cancel_order(self, ticker, order_id):
         body = {
