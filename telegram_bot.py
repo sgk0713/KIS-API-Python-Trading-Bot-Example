@@ -987,7 +987,23 @@ class TelegramController:
     async def cmd_ticker(self, update, context):
         if not self._is_admin(update):
             return
-            
+
+        # 인자가 주어진 경우: /ticker 418660 또는 /ticker 418660 091160 처럼 직접 설정
+        args = context.args if hasattr(context, 'args') else []
+        if args:
+            # 간단 검증 — KR 6자리 숫자 또는 US 대문자 3~5자
+            new_list = [a.strip().upper() if a.strip().isalpha() else a.strip() for a in args]
+            new_list = [a for a in new_list if a]
+            if not new_list:
+                await update.message.reply_text("❌ 유효한 종목코드를 입력하세요. 예: /ticker 418660")
+                return
+            self.cfg.set_active_tickers(new_list)
+            await update.message.reply_text(
+                f"✅ 운용 종목 변경 완료: <b>{', '.join(new_list)}</b>",
+                parse_mode='HTML',
+            )
+            return
+
         msg, markup = self.view.get_ticker_menu(self.cfg.get_active_tickers())
         await update.message.reply_text(msg, reply_markup=markup, parse_mode='HTML')
 
@@ -1507,8 +1523,12 @@ class TelegramController:
                     await query.edit_message_text(f"⚠️ <b>[{ticker}] 보유 물량이 없어 이관할 대상이 없습니다.</b>", parse_mode='HTML')
 
         elif action == "TICKER":
-            self.cfg.set_active_tickers([sub] if sub != "ALL" else ["SOXL", "TQQQ"])
-            await query.edit_message_text(f"✅ 운용 종목 변경: {sub}")
+            if sub == "ALL":
+                new_tickers = ["SOXL", "TQQQ"]  # KIS 통합 프리셋
+            else:
+                new_tickers = [sub]
+            self.cfg.set_active_tickers(new_tickers)
+            await query.edit_message_text(f"✅ 운용 종목 변경: {', '.join(new_tickers)}")
             
         elif action == "SEED":
             ticker = data[2]

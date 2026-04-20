@@ -673,10 +673,23 @@ class TelegramView:
         return fname
 
     def get_ticker_menu(self, current_tickers):
+        import market_context as mc
+        msg = f"🔄 <b>[ 운용 종목 선택 ]</b>\n현재: <b>{', '.join(current_tickers) or '(없음)'}</b>\n"
+
+        if mc.is_kr():
+            msg += "\n📌 KR 모드 — 6자리 종목코드로 운용\n"
+            msg += "▫️ 기본 버튼: 418660 (TIGER 미국나스닥100레버리지) 단독 운용\n"
+            msg += "▫️ 변경: <code>/ticker 418660</code> 또는 <code>/ticker 418660 091160</code> 식으로 수동 입력"
+            keyboard = [
+                [InlineKeyboardButton("💎 418660 단독", callback_data="TICKER:418660")],
+            ]
+            return msg, InlineKeyboardMarkup(keyboard)
+
+        # KIS(US) 원본 메뉴
         keyboard = [
             [InlineKeyboardButton("🔥 SOXL 전용", callback_data="TICKER:SOXL")],
             [InlineKeyboardButton("🚀 TQQQ 전용", callback_data="TICKER:TQQQ")],
             [InlineKeyboardButton("⚡ BULZ 전용", callback_data="TICKER:BULZ")],
-            [InlineKeyboardButton("💎 SOXL + TQQQ 통합", callback_data="TICKER:ALL")]
+            [InlineKeyboardButton("💎 SOXL + TQQQ 통합", callback_data="TICKER:ALL")],
         ]
-        return f"🔄 <b>[ 운용 종목 선택 ]</b>\n현재: <b>{', '.join(current_tickers)}</b>", InlineKeyboardMarkup(keyboard)
+        return msg, InlineKeyboardMarkup(keyboard)
