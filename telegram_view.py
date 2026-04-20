@@ -45,26 +45,42 @@ class TelegramView:
     def get_start_message(self, target_hour, season_icon, latest_version):
         import market_context as mc
 
-        msg = f"🌌 [ 인피니트 스노우볼 {latest_version} ]\n"
-        msg += "💠 2대 퀀트 코어 + AVWAP 하이브리드\n\n"
-
         if mc.is_kr():
-            # KR(키움) 실제 스케줄 — main.py 의 KIWOOM 분기와 일치
+            # KR(키움) 버전 — 국내주식 V14 무한매수 전용 (AVWAP/V_REV 미사용)
+            msg = f"🌌 [ 인피니트 스노우볼 {latest_version} · 🇰🇷 국내주식 ]\n"
+            msg += "💠 V14 무한매수 엔진 + 리버스 방어 모드\n\n"
+
             msg += "🕒 [ KRX 운영 스케줄 (KST) ]\n"
             msg += "🔹 6시간 간격 : 🔑 API 토큰 자동 갱신\n"
             msg += "🔹 08:45 : 📝 장부 동기화 & 졸업 자동 감지\n"
             msg += "🔹 09:05 : 🌃 V14 일일 주문 장전\n"
             msg += "🔹 15:25 : ⏰ 마감 지연 주문(LOC/MOC) 일괄 발송\n"
             msg += "🔹 17:00 : 🔓 매매 잠금 해제 & 리버스 관리\n\n"
-        else:
-            # KIS(US) 원본 스케줄
-            dst_state = "🌞서머타임 ON" if target_hour == 17 else "❄️서머타임 OFF"
-            msg += f"🕒 [ 운영 스케줄 ({dst_state}) ]\n"
-            msg += "🔹 6시간 간격 : 🔑 API 토큰 자동 갱신\n"
-            msg += "🔹 08:30 : 📝 잔고 동기화 & 자동 복리\n"
-            msg += f"🔹 {target_hour}:00 : 🔐 매매 초기화 및 변동성 락온\n"
-            msg += f"🔹 {target_hour}:05 : 🌃 통합 주문 자동 실행\n\n"
-        
+
+            msg += "🛠 [ 주요 명령어 ]\n"
+            msg += "▶️ /sync : 📜 잔고·장부 동기화 지시서\n"
+            msg += "▶️ /record : 📊 수동 매매 장부 기록\n"
+            msg += "▶️ /history : 🏆 졸업(익절) 명예의 전당\n"
+            msg += "▶️ /settlement : ⚙️ 전술 설정 (분할수·목표%·복리율)\n"
+            msg += "▶️ /seed : 💵 종목별 시드머니 관리\n"
+            msg += "▶️ /ticker : 🔄 운용 종목 선택\n"
+            msg += "▶️ /version : 🛠️ 버전 및 업데이트 내역\n\n"
+
+            msg += "⚠️ /reset : 🔓 비상 해제 메뉴 (매매 잠금 / 리버스 / 장부 초기화)\n"
+            msg += "┗ 🚨 추가 예수금을 입금해 리버스 모드를 수동으로 해제해야 할 때 사용하세요."
+            return msg
+
+        # KIS(US) 원본 스케줄 — 기존 동작 보존
+        msg = f"🌌 [ 인피니트 스노우볼 {latest_version} ]\n"
+        msg += "💠 2대 퀀트 코어 + AVWAP 하이브리드\n\n"
+
+        dst_state = "🌞서머타임 ON" if target_hour == 17 else "❄️서머타임 OFF"
+        msg += f"🕒 [ 운영 스케줄 ({dst_state}) ]\n"
+        msg += "🔹 6시간 간격 : 🔑 API 토큰 자동 갱신\n"
+        msg += "🔹 08:30 : 📝 잔고 동기화 & 자동 복리\n"
+        msg += f"🔹 {target_hour}:00 : 🔐 매매 초기화 및 변동성 락온\n"
+        msg += f"🔹 {target_hour}:05 : 🌃 통합 주문 자동 실행\n\n"
+
         msg += "🛠 [ 주요 명령어 ]\n"
         msg += "▶️ /sync : 📜 통합 지시서 조회\n"
         msg += "▶️ /record : 📊 장부 동기화 및 조회\n"
@@ -74,7 +90,7 @@ class TelegramView:
         msg += "▶️ /ticker : 🔄 운용 종목 선택\n"
         msg += "▶️ /mode : 🎯 상방 스나이퍼 ON/OFF\n"
         msg += "▶️ /version : 🛠️ 버전 및 업데이트 내역\n\n"
-        
+
         msg += "⚠️ /reset : 🔓 비상 해제 메뉴 (락/리버스)\n"
         msg += "┗ 🚨 수동 닻 올리기: 예산 부족으로 리버스 진입 후 외화RP매도 등 예수금을 추가 입금하셨다면, 이 메뉴에서 반드시 '리버스 강제 해제'를 눌러 닻을 올려주세요!"
         return msg
