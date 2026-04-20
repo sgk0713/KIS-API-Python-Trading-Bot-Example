@@ -22,6 +22,9 @@ from broker import KoreaInvestmentBroker
 from strategy import InfiniteStrategy
 from telegram_bot import TelegramController
 
+# 💡 [키움 지원] BROKER 환경변수에 따라 broker_kiwoom.KiwoomBroker 선택
+# 기본값은 KIS (기존 동작 보존). BROKER=KIWOOM 이면 키움 국내주식 모드.
+
 # 💡 [V_REV 신규 역추세 엔진 의존성 주입]
 from queue_ledger import QueueLedger
 from strategy_reversion import ReversionStrategy
@@ -59,7 +62,7 @@ if not os.path.exists('data'):
 if not os.path.exists('logs'):
     os.makedirs('logs')
 
-load_dotenv() 
+load_dotenv(os.getenv("ENV_FILE") or None)
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 try:
@@ -67,14 +70,26 @@ try:
 except ValueError:
     ADMIN_CHAT_ID = None
 
-APP_KEY = os.getenv("APP_KEY")
-APP_SECRET = os.getenv("APP_SECRET")
-CANO = os.getenv("CANO")
-ACNT_PRDT_CD = os.getenv("ACNT_PRDT_CD", "01")
+BROKER_CHOICE = os.getenv("BROKER", "KIS").upper()
 
-if not all([TELEGRAM_TOKEN, APP_KEY, APP_SECRET, CANO]):
-    print("❌ [치명적 오류] .env 파일에 봇 구동 필수 키(TELEGRAM_TOKEN, APP_KEY, APP_SECRET, CANO)가 누락되었습니다. 봇을 종료합니다.")
-    exit(1)
+if BROKER_CHOICE == "KIWOOM":
+    KIWOOM_APPKEY = os.getenv("KIWOOM_APPKEY")
+    KIWOOM_SECRETKEY = os.getenv("KIWOOM_SECRETKEY")
+    KIWOOM_ACCOUNT_NO = os.getenv("KIWOOM_ACCOUNT_NO")
+    KIWOOM_IS_MOCK = os.getenv("KIWOOM_IS_MOCK", "1") == "1"
+
+    if not all([TELEGRAM_TOKEN, KIWOOM_APPKEY, KIWOOM_SECRETKEY, KIWOOM_ACCOUNT_NO]):
+        print("❌ [치명적 오류] .env 파일에 키움 필수 키(TELEGRAM_TOKEN, KIWOOM_APPKEY, KIWOOM_SECRETKEY, KIWOOM_ACCOUNT_NO)가 누락되었습니다. 봇을 종료합니다.")
+        exit(1)
+else:
+    APP_KEY = os.getenv("APP_KEY")
+    APP_SECRET = os.getenv("APP_SECRET")
+    CANO = os.getenv("CANO")
+    ACNT_PRDT_CD = os.getenv("ACNT_PRDT_CD", "01")
+
+    if not all([TELEGRAM_TOKEN, APP_KEY, APP_SECRET, CANO]):
+        print("❌ [치명적 오류] .env 파일에 봇 구동 필수 키(TELEGRAM_TOKEN, APP_KEY, APP_SECRET, CANO)가 누락되었습니다. 봇을 종료합니다.")
+        exit(1)
 
 log_filename = f"logs/bot_app_{datetime.datetime.now().strftime('%Y%m%d')}.log"
 logging.basicConfig(
@@ -147,8 +162,15 @@ def main():
     perform_self_cleaning()
     
     if ADMIN_CHAT_ID: cfg.set_chat_id(ADMIN_CHAT_ID)
-    
-    broker = KoreaInvestmentBroker(APP_KEY, APP_SECRET, CANO, ACNT_PRDT_CD)
+
+    if BROKER_CHOICE == "KIWOOM":
+        from broker_kiwoom import KiwoomBroker
+        broker = KiwoomBroker(KIWOOM_APPKEY, KIWOOM_SECRETKEY, KIWOOM_ACCOUNT_NO, is_mock=KIWOOM_IS_MOCK)
+        print(f"🏦 [브로커] 키움 REST API ({'모의투자' if KIWOOM_IS_MOCK else '운영'})")
+    else:
+        broker = KoreaInvestmentBroker(APP_KEY, APP_SECRET, CANO, ACNT_PRDT_CD)
+        print(f"🏦 [브로커] 한국투자증권 ({'모의투자' if ACNT_PRDT_CD != '01' else '운영'})")
+
     strategy = InfiniteStrategy(cfg)
     
     queue_ledger = QueueLedger()
@@ -210,31 +232,37 @@ def main():
         # MODIFIED: [V25.19 핫픽스] EST/KST 타임존 충돌을 방어하기 위해 명시적 선언 및 주입 (Medium 9)
         kst = pytz.timezone('Asia/Seoul')
         est = pytz.timezone('US/Eastern')
-        
-        # 1. 시스템 관리 스케줄러 (core)
+
+        # 1. 시스템 관리 스케줄러 (양 브로커 공용)
         for tt in [datetime.time(7,0,tzinfo=kst), datetime.time(11,0,tzinfo=kst), datetime.time(16,30,tzinfo=kst), datetime.time(22,0,tzinfo=kst)]:
             jq.run_daily(scheduled_token_check, time=tt, days=tuple(range(7)), chat_id=cfg.get_chat_id(), data=app_data)
-        
-        jq.run_daily(scheduled_auto_sync_summer, time=datetime.time(8, 30, tzinfo=kst), days=tuple(range(7)), chat_id=cfg.get_chat_id(), data=app_data)
-        jq.run_daily(scheduled_auto_sync_winter, time=datetime.time(9, 30, tzinfo=kst), days=tuple(range(7)), chat_id=cfg.get_chat_id(), data=app_data)
-        
-        for hour in [17, 18]:
-            jq.run_daily(scheduled_force_reset, time=datetime.time(hour, 0, tzinfo=kst), days=(0,1,2,3,4), chat_id=cfg.get_chat_id(), data=app_data)
-            
-        jq.run_daily(scheduled_volatility_scan, time=datetime.time(10, 20, tzinfo=est), days=(0,1,2,3,4), chat_id=cfg.get_chat_id(), data=app_data)
-        
-        # 2. 실전 전투 매매 스케줄러 (trade)
-        for hour in [17, 18]:
-            jq.run_daily(scheduled_regular_trade, time=datetime.time(hour, 5, tzinfo=kst), days=(0,1,2,3,4), chat_id=cfg.get_chat_id(), data=app_data)
-        
-        jq.run_daily(scheduled_vwap_init_and_cancel, time=datetime.time(15, 30, tzinfo=est), days=(0,1,2,3,4), chat_id=cfg.get_chat_id(), data=app_data)
-
-        jq.run_repeating(scheduled_sniper_monitor, interval=60, chat_id=cfg.get_chat_id(), data=app_data)
-        jq.run_repeating(scheduled_vwap_trade, interval=60, chat_id=cfg.get_chat_id(), data=app_data)
-        
-        jq.run_daily(scheduled_after_market_lottery, time=datetime.time(16, 5, tzinfo=est), days=(0,1,2,3,4), chat_id=cfg.get_chat_id(), data=app_data)
 
         jq.run_daily(scheduled_self_cleaning, time=datetime.time(6, 0, tzinfo=kst), days=tuple(range(7)), chat_id=cfg.get_chat_id(), data=app_data)
+
+        # 2. 시장별 스케줄러 — BROKER=KIS일 때만 US/NYSE 전용 매매 스케줄러 등록
+        if BROKER_CHOICE == "KIWOOM":
+            print("ℹ️  [스케줄러] KIWOOM 모드 — US 전용 매매 스케줄러(volatility_scan / vwap / sniper / after-market / regular_trade / auto_sync / force_reset) 등록 스킵")
+            print("   KR 매매 스케줄러는 Task #8에서 추가 예정. 현재는 토큰 체크 + 셀프클리닝 + 텔레그램 커맨드만 활성.")
+        else:
+            # === KIS 전용 (기존 동작 유지) ===
+            jq.run_daily(scheduled_auto_sync_summer, time=datetime.time(8, 30, tzinfo=kst), days=tuple(range(7)), chat_id=cfg.get_chat_id(), data=app_data)
+            jq.run_daily(scheduled_auto_sync_winter, time=datetime.time(9, 30, tzinfo=kst), days=tuple(range(7)), chat_id=cfg.get_chat_id(), data=app_data)
+
+            for hour in [17, 18]:
+                jq.run_daily(scheduled_force_reset, time=datetime.time(hour, 0, tzinfo=kst), days=(0,1,2,3,4), chat_id=cfg.get_chat_id(), data=app_data)
+
+            jq.run_daily(scheduled_volatility_scan, time=datetime.time(10, 20, tzinfo=est), days=(0,1,2,3,4), chat_id=cfg.get_chat_id(), data=app_data)
+
+            # 실전 전투 매매 스케줄러 (trade)
+            for hour in [17, 18]:
+                jq.run_daily(scheduled_regular_trade, time=datetime.time(hour, 5, tzinfo=kst), days=(0,1,2,3,4), chat_id=cfg.get_chat_id(), data=app_data)
+
+            jq.run_daily(scheduled_vwap_init_and_cancel, time=datetime.time(15, 30, tzinfo=est), days=(0,1,2,3,4), chat_id=cfg.get_chat_id(), data=app_data)
+
+            jq.run_repeating(scheduled_sniper_monitor, interval=60, chat_id=cfg.get_chat_id(), data=app_data)
+            jq.run_repeating(scheduled_vwap_trade, interval=60, chat_id=cfg.get_chat_id(), data=app_data)
+
+            jq.run_daily(scheduled_after_market_lottery, time=datetime.time(16, 5, tzinfo=est), days=(0,1,2,3,4), chat_id=cfg.get_chat_id(), data=app_data)
         
     app.run_polling()
 
