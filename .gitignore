@@ -2,6 +2,10 @@
 __pycache__/
 venv/
 data/
+data/backtest/
 logs/
 .bot_pid
 .idea/
+.pytest_cache/
+tests/__pycache__/
+backtest/__pycache__/
