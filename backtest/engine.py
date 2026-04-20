@@ -266,3 +266,31 @@ class BacktestEngine:
         self._phase_1525(d, bar)
         self._phase_1700(d, bar)
         return list(self.events)[events_before:]
+
+    # ==========================================================
+    # 일별 상태 스냅샷 — 리포터 소비용
+    # ==========================================================
+    def daily_snapshot(self, d):
+        bar = self._bar(d)
+        if bar is None:
+            return None
+        qty, avg, _, _ = self.cfg.calculate_holdings(self.ticker)
+        cash = self._current_cash()
+        close = bar["close"]
+        equity = qty * close
+        rev = self.cfg.get_reverse_state(self.ticker)
+        t_val, one_portion, _ = self.cfg.calculate_v14_state(self.ticker)
+        return {
+            "date": self._iso(d),
+            "open": bar["open"], "high": bar["high"],
+            "low": bar["low"], "close": bar["close"],
+            "volume": bar["volume"],
+            "ma5": round(self._ma5(d), 2),
+            "qty": qty, "avg": round(avg, 2),
+            "cash": round(cash, 2), "equity": round(equity, 2),
+            "total": round(cash + equity, 2),
+            "seed": self.cfg.get_seed(self.ticker),
+            "t_val": round(t_val, 4),
+            "is_reverse": rev.get("is_active", False),
+            "rev_day": rev.get("day_count", 0),
+        }

@@ -157,6 +157,37 @@ def test_reverse_exit_skipped_when_return_below_threshold(tmp_path):
     assert cfg.get_reverse_state("418660").get("day_count") == 2
 
 
+def test_daily_snapshot_shape(fresh_engine):
+    """daily_snapshot 은 OHLC + 잔고 + reverse 상태 전부 포함."""
+    fresh_engine.run_day(datetime.date(2025, 2, 18))
+    snap = fresh_engine.daily_snapshot(datetime.date(2025, 2, 18))
+    assert snap is not None
+    expected_keys = {"date", "open", "high", "low", "close", "volume", "ma5",
+                     "qty", "avg", "cash", "equity", "total", "seed",
+                     "t_val", "is_reverse", "rev_day"}
+    assert set(snap.keys()) == expected_keys
+    assert snap["date"] == "2025-02-18"
+    assert snap["total"] == round(snap["cash"] + snap["equity"], 2)
+
+
+def test_capital_conservation_invariant(tmp_path, graduation_ohlcv):
+    """매일 cash + equity ≥ 0, 체결로 인한 자본 유지 확인."""
+    cfg = BacktestConfig(
+        sandbox_dir=str(tmp_path), ticker="418660",
+        seed=10_000_000, split=40, target_pct=7.0, compound_rate=70,
+    )
+    engine = BacktestEngine(
+        cfg=cfg, ticker="418660",
+        ohlcv=graduation_ohlcv, reverse_exit_threshold=-10.0,
+    )
+    dates = sorted([datetime.date.fromisoformat(k) for k in graduation_ohlcv.keys()])
+    for d in [x for x in dates if x >= datetime.date(2025, 2, 18)]:
+        engine.run_day(d)
+        snap = engine.daily_snapshot(d)
+        assert snap["total"] >= 0, f"{d}: total 음수 {snap['total']}"
+        assert snap["cash"] >= 0, f"{d}: cash 음수 {snap['cash']}"
+
+
 def test_graduation_compounds_seed(tmp_path, graduation_ohlcv):
     cfg = BacktestConfig(
         sandbox_dir=str(tmp_path), ticker="418660",
