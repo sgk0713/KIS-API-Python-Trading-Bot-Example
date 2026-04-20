@@ -1,0 +1,27 @@
+# ==========================================================
+# 키움증권 REST API 기반 봇 설정 예시
+# ==========================================================
+# 사용법:
+#   1) 이 파일을 .env.kiwoom 으로 복사: cp _env.kiwoom.example .env.kiwoom
+#   2) 실제 값 입력
+#   3) ./start.sh .env.kiwoom   (위치 인자로 env 파일 지정)
+#      또는 ENV_FILE=.env.kiwoom ./start.sh
+#   4) BROKER=KIWOOM 이 설정되어야 키움 브로커 경로로 진입
+#
+# 기존 KIS용 .env 와 공존 가능 (서로 다른 파일이므로 덮어쓰기 없음)
+# ==========================================================
+
+# 브로커 선택 스위치 (필수: KIWOOM | KIS)
+BROKER=KIWOOM
+
+# 텔레그램 봇 (공통)
+TELEGRAM_TOKEN=여기에_텔레그램_봇_토큰
+ADMIN_CHAT_ID=여기에_텔레그램_채팅_ID
+
+# 키움 REST API 자격증명
+KIWOOM_APPKEY=여기에_키움_앱키
+KIWOOM_SECRETKEY=여기에_키움_시크릿키
+KIWOOM_ACCOUNT_NO=여기에_계좌번호
+
+# 모의투자 사용 여부 (1 = 모의투자 mockapi.kiwoom.com, 0 = 운영 api.kiwoom.com)
+KIWOOM_IS_MOCK=1
