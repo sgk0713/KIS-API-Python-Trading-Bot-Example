@@ -109,9 +109,10 @@ _API_IDS = {
     "BALANCE_HOLDINGS": "kt00018",  # 계좌평가잔고 → acnt_evlt_remn_indv_tot[]
     "UNFILLED_ORDERS":  "ka10075",  # 미체결 주문 조회 → oso[]
     "EXEC_HISTORY":     "kt00009",  # 체결내역 → acnt_ord_cntr_prst_array[]
-    # 시세 계열 (yfinance 주력이라 미구현)
-    "CURRENT_PRICE":    None,
-    "ORDER_BOOK":       None,
+    # ✅ 시세 계열 (URI: /api/dostk/stkinfo)
+    "STOCK_INFO":       "ka10001",  # 주식기본정보 → cur_prc, base_pric, upl_pric, lst_pric
+    # 추후 확장 여지
+    "ORDER_BOOK":       None,  # 호가 (ka10005 추정)
     "DAILY_CANDLE":     "ka10081",  # 주식 일봉 차트 (/api/dostk/chart)
 }
 
@@ -251,11 +252,42 @@ class KiwoomBroker:
             return 0
 
     def _yf_symbol(self, ticker):
-        """국내 종목코드를 yfinance 심볼로 변환. 기본 .KS(코스피) 가정."""
+        """국내 종목코드를 yfinance 심볼로 변환.
+        .KS(코스피)/.KQ(코스닥) 둘 다 프로브해서 최근 일자가 더 최신인 쪽 선택.
+        결과는 인스턴스 dict에 캐시해 동일 티커 재조회를 방지."""
         t = str(ticker).strip()
         if '.' in t:
             return t
-        return f"{t}.KS"
+
+        if not hasattr(self, '_yf_sym_cache'):
+            self._yf_sym_cache = {}
+        cached = self._yf_sym_cache.get(t)
+        if cached:
+            return cached
+
+        def _latest_date(sym):
+            try:
+                h = yf.Ticker(sym).history(period="5d", timeout=5)
+                if h.empty:
+                    return None
+                last_idx = h.index[-1]
+                return last_idx.date() if hasattr(last_idx, 'date') else None
+            except Exception:
+                return None
+
+        ks = f"{t}.KS"
+        kq = f"{t}.KQ"
+        ks_date = _latest_date(ks)
+        kq_date = _latest_date(kq)
+
+        if ks_date and kq_date:
+            chosen = ks if ks_date >= kq_date else kq
+        elif kq_date:
+            chosen = kq
+        else:
+            chosen = ks  # .KS가 유일하거나 둘 다 실패 시 기본
+        self._yf_sym_cache[t] = chosen
+        return chosen
 
     def _round_to_krw_tick(self, price, side=None):
         """KRX 가격대별 호가단위로 반올림.
@@ -312,9 +344,36 @@ class KiwoomBroker:
         return 0.0, None
 
     # ==========================================================
-    # 시세 (yfinance 주력)
+    # 시세 (키움 ka10001 주력, yfinance 백업)
     # ==========================================================
+    def _kiwoom_stock_basic(self, ticker):
+        """ka10001 주식기본정보 — cur_prc(현재가), base_pric(전일종가),
+        upl_pric(상한가), lst_pric(하한가). 응답값은 '+15000' / '-28100'
+        식으로 부호 prefix 있음 (전일대비 방향)."""
+        res = self._call_api(_API_IDS["STOCK_INFO"], _STKINFO_PATH, "POST",
+                             body={"stk_cd": str(ticker)})
+        if res.get('return_code') != 0:
+            return None
+        return res
+
+    def _parse_signed_price(self, raw):
+        """'+15000' 또는 '-28100' 형태를 절대값 float로."""
+        if raw is None:
+            return 0.0
+        return self._safe_float(str(raw).lstrip('+-'))
+
     def get_current_price(self, ticker, is_market_closed=False):
+        # 1순위: 키움 ka10001 (국장 실시간 공식 시세)
+        try:
+            info = self._kiwoom_stock_basic(ticker)
+            if info:
+                price = self._parse_signed_price(info.get('cur_prc'))
+                if price > 0:
+                    return price
+        except Exception as e:
+            print(f"⚠️ [KiwoomBroker] 키움 현재가 실패 ({ticker}): {e} — yfinance 폴백")
+
+        # 2순위: yfinance (백업)
         try:
             stock = yf.Ticker(self._yf_symbol(ticker))
             if is_market_closed:
@@ -328,6 +387,17 @@ class KiwoomBroker:
             return 0.0
 
     def get_previous_close(self, ticker):
+        # 1순위: 키움 ka10001.base_pric (전일 종가)
+        try:
+            info = self._kiwoom_stock_basic(ticker)
+            if info:
+                price = self._parse_signed_price(info.get('base_pric'))
+                if price > 0:
+                    return price
+        except Exception as e:
+            print(f"⚠️ [KiwoomBroker] 키움 전일종가 실패 ({ticker}): {e} — yfinance 폴백")
+
+        # 2순위: yfinance
         try:
             stock = yf.Ticker(self._yf_symbol(ticker))
             hist = stock.history(period="5d", timeout=5)
