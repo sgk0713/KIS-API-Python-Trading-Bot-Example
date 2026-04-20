@@ -30,6 +30,24 @@ from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler, Mes
 from telegram_view import TelegramView
 # BROKER-aware 금액 포맷팅 (KIS → $X.XX, KIWOOM → X,XXX원)
 from market_context import format_money as _fmt_money
+import market_context as _mc
+
+
+def _apply_kr_plan_filter(plan):
+    """KR 모드에서 V14 plan의 별값매도를 제거하고 목표매도에 통합 (자전거래 방지).
+    KIS 모드에서는 무변경. cmd_sync 표시와 수동 EXEC 주문 송신이 일관되도록."""
+    if not plan or not _mc.is_kr():
+        return plan
+    try:
+        from scheduler_trade_kr import _merge_star_sell_to_target
+        if plan.get('core_orders'):
+            plan['core_orders'] = _merge_star_sell_to_target(plan['core_orders'])
+        if plan.get('bonus_orders'):
+            plan['bonus_orders'] = _merge_star_sell_to_target(plan['bonus_orders'])
+        plan['orders'] = plan.get('core_orders', []) + plan.get('bonus_orders', [])
+    except Exception:
+        pass
+    return plan
 
 class TelegramController:
     def __init__(self, config, broker, strategy, tx_lock=None, queue_ledger=None, strategy_rev=None):
@@ -366,9 +384,10 @@ class TelegramController:
                 plan = self.strategy.get_plan(
                     t, curr, actual_avg, actual_qty, safe_prev_close, ma_5day=ma_5day,
                     market_type="REG", available_cash=allocated_cash[t],
-                    is_simulation=True 
+                    is_simulation=True
                 )
-                
+                plan = _apply_kr_plan_filter(plan)
+
                 split = self.cfg.get_split_count(t)
                 seed = self.cfg.get_seed(t)
                 ver = self.cfg.get_version(t)
@@ -1373,7 +1392,8 @@ class TelegramController:
                 
                 ma_5day = await asyncio.to_thread(self.broker.get_5day_ma, t)
                 plan = self.strategy.get_plan(t, curr_p, safe_avg, safe_qty, prev_c, ma_5day=ma_5day, market_type="REG", available_cash=allocated_cash[t])
-                
+                plan = _apply_kr_plan_filter(plan)
+
                 title = f"💎 <b>[{t}] 무매4 정규장 주문 수동 실행</b>\n"
                 msg = title
                 
