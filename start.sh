@@ -3,6 +3,11 @@ set -e
 
 # ==========================================================
 # start.sh - 환경 설정 + 봇 실행 통합 스크립트
+# ----------------------------------------------------------
+# 사용법:
+#   ./start.sh                  → .env 사용 (기본)
+#   ./start.sh .env.kiwoom      → 지정 파일 사용
+#   ENV_FILE=.env.kiwoom ./start.sh  → 환경변수로 지정
 # ==========================================================
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -11,6 +16,13 @@ cd "$SCRIPT_DIR"
 VENV_DIR="venv"
 REQUIREMENTS="requests yfinance pytz pandas_market_calendars python-dotenv pillow python-telegram-bot[job-queue] peewee"
 MIN_MINOR=10
+
+# 위치 인자 우선, 없으면 ENV_FILE 변수, 그래도 없으면 .env
+if [ -n "$1" ]; then
+    ENV_FILE="$1"
+fi
+ENV_FILE="${ENV_FILE:-.env}"
+echo "[INFO] env 파일: $ENV_FILE"
 
 # ----------------------------------------------------------
 # 1) 이미 실행 중인지 확인
@@ -84,38 +96,52 @@ echo "[*] 의존성 확인 중..."
 echo "[OK] 의존성 준비 완료"
 
 # ----------------------------------------------------------
-# 5) .env 파일 확인
+# 5) env 파일 확인
 # ----------------------------------------------------------
-if [ ! -f .env ]; then
-    if [ -f _env.example ]; then
+if [ ! -f "$ENV_FILE" ]; then
+    # 기본 .env 이름일 때만 _env.example에서 자동 복사
+    if [ "$ENV_FILE" = ".env" ] && [ -f _env.example ]; then
         echo "[!] .env 파일이 없습니다. _env.example 에서 복사합니다."
         cp _env.example .env
         echo "[!] .env 파일을 열어 실제 값을 입력한 뒤 다시 실행해주세요."
         exit 1
     else
-        echo "[ERROR] .env 파일과 _env.example 모두 없습니다."
+        echo "[ERROR] $ENV_FILE 파일이 없습니다."
+        echo "         키움 모드는: cp _env.kiwoom.example .env.kiwoom 후 값을 입력하고 ./start.sh .env.kiwoom 으로 실행하세요."
         exit 1
     fi
 fi
 
+# 브로커 선택 감지 (기본 KIS)
+BROKER_VAL=$(grep "^BROKER=" "$ENV_FILE" | cut -d'=' -f2- | tr -d ' "' | tr '[:lower:]' '[:upper:]')
+BROKER_VAL=${BROKER_VAL:-KIS}
+
+if [ "$BROKER_VAL" = "KIWOOM" ]; then
+    REQUIRED_VARS="TELEGRAM_TOKEN KIWOOM_APPKEY KIWOOM_SECRETKEY KIWOOM_ACCOUNT_NO"
+    echo "[INFO] BROKER=KIWOOM (키움 REST API 모드)"
+else
+    REQUIRED_VARS="TELEGRAM_TOKEN APP_KEY APP_SECRET CANO"
+    echo "[INFO] BROKER=KIS (한국투자증권 모드 · 기본값)"
+fi
+
 # 필수 환경변수 검증
 MISSING=()
-for VAR in TELEGRAM_TOKEN APP_KEY APP_SECRET CANO; do
-    VAL=$(grep "^${VAR}=" .env | cut -d'=' -f2-)
+for VAR in $REQUIRED_VARS; do
+    VAL=$(grep "^${VAR}=" "$ENV_FILE" | cut -d'=' -f2-)
     if [ -z "$VAL" ] || echo "$VAL" | grep -q "여기에"; then
         MISSING+=("$VAR")
     fi
 done
 
 if [ ${#MISSING[@]} -gt 0 ]; then
-    echo "[ERROR] .env 에 다음 값이 설정되지 않았습니다:"
+    echo "[ERROR] $ENV_FILE 에 다음 값이 설정되지 않았습니다:"
     for V in "${MISSING[@]}"; do
         echo "  - $V"
     done
-    echo "  .env 파일을 수정한 뒤 다시 실행해주세요."
+    echo "  $ENV_FILE 파일을 수정한 뒤 다시 실행해주세요."
     exit 1
 fi
-echo "[OK] .env 검증 완료"
+echo "[OK] $ENV_FILE 검증 완료"
 
 # ----------------------------------------------------------
 # 6) 필요 디렉토리 생성
@@ -133,6 +159,7 @@ echo "[OK] 타임존: $TZ"
 # 8) 봇 실행
 # ----------------------------------------------------------
 echo "[*] 봇을 시작합니다..."
+export ENV_FILE
 nohup "$VENV_DIR/bin/python" main.py > logs/bot.log 2>&1 & echo $! > .bot_pid
 echo "[OK] 봇 시작 완료 (PID: $(cat .bot_pid))"
 echo "    로그 확인: tail -f logs/bot.log"
