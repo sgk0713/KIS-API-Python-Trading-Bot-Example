@@ -27,7 +27,9 @@ import yfinance as yf
 import pandas_market_calendars as mcal 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters
-from telegram_view import TelegramView 
+from telegram_view import TelegramView
+# BROKER-aware 금액 포맷팅 (KIS → $X.XX, KIWOOM → X,XXX원)
+from market_context import format_money as _fmt_money
 
 class TelegramController:
     def __init__(self, config, broker, strategy, tx_lock=None, queue_ledger=None, strategy_rev=None):
@@ -216,7 +218,7 @@ class TelegramController:
                 )
                 if curr_p and curr_p > 0:
                     if price < curr_p * 0.7 or price > curr_p * 1.3:
-                        return await update.message.reply_text(f"🚨 <b>오입력 차단:</b> 입력하신 평단가(<b>${price:.2f}</b>)가 현재가 대비 ±30%를 벗어납니다. 오타를 확인하세요!", parse_mode='HTML')
+                        return await update.message.reply_text(f"🚨 <b>오입력 차단:</b> 입력하신 평단가(<b>{_fmt_money(price, 2)}</b>)가 현재가 대비 ±30%를 벗어납니다. 오타를 확인하세요!", parse_mode='HTML')
             except asyncio.TimeoutError:
                 pass 
             except Exception:
@@ -243,7 +245,7 @@ class TelegramController:
             
             chat_id = update.effective_chat.id
             await self._verify_and_update_queue(ticker, ticker_q, context, chat_id)
-            await update.message.reply_text(f"✅ <b>[{ticker}] 수동 지층 삽입 완료!</b>\n▫️ {date_str} | {qty}주 | ${price:.2f}", parse_mode='HTML')
+            await update.message.reply_text(f"✅ <b>[{ticker}] 수동 지층 삽입 완료!</b>\n▫️ {date_str} | {qty}주 | {_fmt_money(price, 2)}", parse_mode='HTML')
                 
         except Exception as e:
             await update.message.reply_text(f"❌ 알 수 없는 에러 발생: {e}")
@@ -393,17 +395,17 @@ class TelegramController:
                         l1_price = q_list[-1].get('price', safe_prev_close)
                         
                         target_l1 = round(l1_price * 1.006, 2)
-                        v_rev_guidance += f" 🔵 [1층 단독] ${target_l1:.2f} 돌파 시 <b>{l1_qty}주</b> 매도\n"
+                        v_rev_guidance += f" 🔵 [1층 단독] {_fmt_money(target_l1, 2)} 돌파 시 <b>{l1_qty}주</b> 매도\n"
                         
                         upper_qty = actual_qty - l1_qty
                         if upper_qty > 0:
                             upper_invested = (actual_qty * actual_avg) - (l1_qty * l1_price)
                             upper_avg = upper_invested / upper_qty if upper_invested > 0 else actual_avg
                             target_upper = round(upper_avg * 1.005, 2)
-                            v_rev_guidance += f" 🔵 [상위 재고] ${target_upper:.2f} 돌파 시 <b>{upper_qty}주</b> 매도\n"
+                            v_rev_guidance += f" 🔵 [상위 재고] {_fmt_money(target_upper, 2)} 돌파 시 <b>{upper_qty}주</b> 매도\n"
                             
                             target_jackpot = round(actual_avg * 1.01, 2)
-                            v_rev_guidance += f" 🎯 [전체 잭팟] ${target_jackpot:.2f} 돌파 시 <b>{actual_qty}주</b> (옵션)\n"
+                            v_rev_guidance += f" 🎯 [전체 잭팟] {_fmt_money(target_jackpot, 2)} 돌파 시 <b>{actual_qty}주</b> (옵션)\n"
                     else:
                         v_rev_guidance += " 🔵 감시 매도: 대기 물량 없음 (관망)\n"
                     
@@ -415,9 +417,9 @@ class TelegramController:
                         b2_qty = math.floor(half_portion_cash / b2_price) if b2_price > 0 else 0
                         
                         if b1_qty > 0:
-                            v_rev_guidance += f" 🔴 매수1(Buy1): ${b1_price:.2f} 진입 시 <b>{b1_qty}주</b>\n"
+                            v_rev_guidance += f" 🔴 매수1(Buy1): {_fmt_money(b1_price, 2)} 진입 시 <b>{b1_qty}주</b>\n"
                         if b2_qty > 0:
-                            v_rev_guidance += f" 🔴 매수2(Buy2): ${b2_price:.2f} 진입 시 <b>{b2_qty}주</b>\n"
+                            v_rev_guidance += f" 🔴 매수2(Buy2): {_fmt_money(b2_price, 2)} 진입 시 <b>{b2_qty}주</b>\n"
                             
                         if actual_qty == 0 or v_rev_q_qty == 0:
                             v_rev_guidance += " 🚫 <code>[0주 새출발] 기준 평단가 부재로 줍줍 생략 (1층 확보에 예산 100% 집중)</code>"
@@ -426,7 +428,7 @@ class TelegramController:
                             grid_end = round(half_portion_cash / (b2_qty + 5), 2)
                             if grid_start >= 0.01 and grid_start < b2_price:
                                 grid_end = max(grid_end, 0.01)
-                                v_rev_guidance += f" 🧹 줍줍(5개): ${grid_start:.2f} ~ ${grid_end:.2f} (LOC)"
+                                v_rev_guidance += f" 🧹 줍줍(5개): {_fmt_money(grid_start, 2)} ~ {_fmt_money(grid_end, 2)} (LOC)"
                     else:
                         v_rev_guidance += " 🔴 매수 대기: 타점 연산 대기 중"
 
@@ -627,7 +629,7 @@ class TelegramController:
                         
                         msg = f"🎉 <b>[{ticker} V-REV 잭팟 스윕(전량 익절) 감지!]</b>\n▫️ 잔고가 0주가 되어 LIFO 큐 지층을 100% 소각(초기화)했습니다."
                         if added_seed > 0:
-                            msg += f"\n💸 <b>자동 복리 +${added_seed:,.0f}</b> 이 다음 운용 시드에 완벽하게 추가되었습니다!"
+                            msg += f"\n💸 <b>자동 복리 +{_fmt_money(added_seed, 0)}</b> 이 다음 운용 시드에 완벽하게 추가되었습니다!"
                         await context.bot.send_message(chat_id, msg, parse_mode='HTML')
                         
                         if snapshot:
@@ -680,7 +682,7 @@ class TelegramController:
                             if new_hist:
                                 msg = f"🎉 <b>[{ticker} 졸업 확인!]</b>\n장부를 명예의 전당에 저장하고 새 사이클을 준비합니다."
                                 if added_seed > 0:
-                                    msg += f"\n💸 <b>자동 복리 +${added_seed:,.0f}</b> 이 다음 운용 시드에 완벽하게 추가되었습니다!"
+                                    msg += f"\n💸 <b>자동 복리 +{_fmt_money(added_seed, 0)}</b> 이 다음 운용 시드에 완벽하게 추가되었습니다!"
                                 await context.bot.send_message(chat_id, msg, parse_mode='HTML')
                                 try:
                                     img_path = self.view.create_profit_image(
@@ -802,7 +804,7 @@ class TelegramController:
             for (date, side), data in agg_dict.items():
                 tot_qty = data['qty']
                 avg_prc = data['amt'] / tot_qty if tot_qty > 0 else 0.0
-                report += f"{idx:<3} {date} {side} ${avg_prc:<6.2f} {tot_qty}주\n"
+                report += f"{idx:<3} {date} {side} {_fmt_money(avg_prc, 2):<12} {tot_qty}주\n"
                 idx += 1
                 
             report += "-"*30 + "</code>\n"
@@ -815,9 +817,9 @@ class TelegramController:
             
             report += "📊 <b>[ 현재 진행 상황 요약 ]</b>\n"
             report += f"▪️ 현재 T값 : {t_val:.4f} T ({int(split)}분할)\n"
-            report += f"▪️ 보유 수량 : {actual_qty} 주 (평단 ${actual_avg:,.2f})\n"
-            report += f"▪️ 총 매수액 : ${total_buy:,.2f}\n"
-            report += f"▪️ 총 매도액 : ${total_sell:,.2f}"
+            report += f"▪️ 보유 수량 : {actual_qty} 주 (평단 {_fmt_money(actual_avg, 2)})\n"
+            report += f"▪️ 총 매수액 : {_fmt_money(total_buy, 2)}\n"
+            report += f"▪️ 총 매도액 : {_fmt_money(total_sell, 2)}"
             
             msg = report
 
@@ -865,7 +867,7 @@ class TelegramController:
             return
             
         msg = "🏆 <b>[ 졸업 명예의 전당 ]</b>\n"
-        keyboard = [[InlineKeyboardButton(f"{h['end_date']} | {h['ticker']} (+${h['profit']:.0f})", callback_data=f"HIST:VIEW:{h['id']}")] for h in history]
+        keyboard = [[InlineKeyboardButton(f"{h['end_date']} | {h['ticker']} (+{_fmt_money(h['profit'], 0)})", callback_data=f"HIST:VIEW:{h['id']}")] for h in history]
         await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
 
     async def cmd_mode(self, update, context):
@@ -940,7 +942,7 @@ class TelegramController:
         keyboard = []
         for t in self.cfg.get_active_tickers():
             current_seed = self.cfg.get_seed(t)
-            msg += f"💎 <b>{t}</b>: ${current_seed:,.0f}\n"
+            msg += f"💎 <b>{t}</b>: {_fmt_money(current_seed, 0)}\n"
             keyboard.append([
                 InlineKeyboardButton(f"➕ {t} 추가", callback_data=f"SEED:ADD:{t}"), 
                 InlineKeyboardButton(f"➖ {t} 감소", callback_data=f"SEED:SUB:{t}"),
@@ -1342,7 +1344,7 @@ class TelegramController:
                             
                         err_msg = res.get('msg1', '오류')
                         status_icon = '✅' if is_success else f'❌({err_msg})'
-                        msg += f"└ {o['desc']} {o['qty']}주 (${o['price']}): {status_icon}\n"
+                        msg += f"└ {o['desc']} {o['qty']}주 ({_fmt_money(o['price'], 2)}): {status_icon}\n"
                         await asyncio.sleep(0.2)
                         
                     if all_success and len(loc_orders) > 0:
@@ -1465,7 +1467,7 @@ class TelegramController:
                     }]
                     try:
                         await self._verify_and_update_queue(ticker, new_q, context, query.message.chat_id)
-                        await query.edit_message_text(f"✅ <b>[{ticker}] 자동 물량 이관 및 초기화 완료!</b>\n\n<b>{qty}주</b>(평단 <b>${avg:.2f}</b>)의 단일 기초 블록으로 완벽히 재구성되었습니다.", parse_mode='HTML')
+                        await query.edit_message_text(f"✅ <b>[{ticker}] 자동 물량 이관 및 초기화 완료!</b>\n\n<b>{qty}주</b>(평단 <b>{_fmt_money(avg, 2)}</b>)의 단일 기초 블록으로 완벽히 재구성되었습니다.", parse_mode='HTML')
                     except Exception as e:
                         await query.edit_message_text(f"❌ 쓰기 오류 발생: {e}", parse_mode='HTML')
                 else:
@@ -1554,7 +1556,7 @@ class TelegramController:
                     )
                     if curr_p and curr_p > 0 and (price < curr_p * 0.7 or price > curr_p * 1.3):
                         del self.user_states[chat_id]
-                        return await update.message.reply_text(f"🚨 <b>팻핑거 방어 가동:</b> 입력가(${price:.2f})가 현재가(${curr_p:.2f}) 대비 ±30%를 초과합니다. 다시 시도해주세요.", parse_mode='HTML')
+                        return await update.message.reply_text(f"🚨 <b>팻핑거 방어 가동:</b> 입력가({_fmt_money(price, 2)})가 현재가({_fmt_money(curr_p, 2)}) 대비 ±30%를 초과합니다. 다시 시도해주세요.", parse_mode='HTML')
                 except Exception:
                     pass
 
@@ -1574,7 +1576,7 @@ class TelegramController:
                 await self._verify_and_update_queue(ticker, ticker_q, context, chat_id)
                 del self.user_states[chat_id]
                 short_date = target_date[:10]
-                await update.message.reply_text(f"✅ <b>[{ticker}] 지층 정밀 수정 완료!</b>\n▫️ {short_date} | {qty}주 | ${price:.2f}\n▫️ 확인: 장부 하단 🗄️ 버튼", parse_mode='HTML')
+                await update.message.reply_text(f"✅ <b>[{ticker}] 지층 정밀 수정 완료!</b>\n▫️ {short_date} | {qty}주 | {_fmt_money(price, 2)}\n▫️ 확인: 장부 하단 🗄️ 버튼", parse_mode='HTML')
                 return
 
             val = float(text)
@@ -1588,7 +1590,7 @@ class TelegramController:
                 curr = self.cfg.get_seed(ticker)
                 new_v = curr + val if action == "ADD" else (max(0, curr - val) if action == "SUB" else val)
                 self.cfg.set_seed(ticker, new_v)
-                await update.message.reply_text(f"✅ [{ticker}] 시드 변경: ${new_v:,.0f}")
+                await update.message.reply_text(f"✅ [{ticker}] 시드 변경: {_fmt_money(new_v, 0)}")
                 
             elif state.startswith("CONF_SPLIT"):
                 if val < 1:

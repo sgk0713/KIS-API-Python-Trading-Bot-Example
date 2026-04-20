@@ -18,6 +18,8 @@ import os
 import math
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from PIL import Image, ImageDraw, ImageFont
+# BROKER-aware 금액 포맷팅
+from market_context import format_money as _fmt_money
 
 class TelegramView:
     def __init__(self):
@@ -115,7 +117,7 @@ class TelegramView:
         
         msg += f"▫️ 총 보유 로트(Lot) : {len(q_data)} 개 층\n"
         msg += f"▫️ 총 장전 수량 : {total_q} 주\n"
-        msg += f"▫️ 큐 통합 평단가 : ${avg_p:.2f}\n\n"
+        msg += f"▫️ 큐 통합 평단가 : {_fmt_money(avg_p, 2)}\n\n"
         msg += "<b>[ LIFO 층별 상세 (최근 매수 순) ]</b>\n"
         msg += "<code>No. 일자        수량   평단가\n"
         msg += "-"*30 + "\n"
@@ -129,7 +131,7 @@ class TelegramView:
                 price = item.get('price', 0.0)
                 date_str = item.get('date', '')[:10]
                 real_idx = len(q_data) - idx
-                msg += f"{real_idx:<3} {date_str[5:]} {qty:>4}주 ${price:.2f}\n"
+                msg += f"{real_idx:<3} {date_str[5:]} {qty:>4}주 {_fmt_money(price, 2)}\n"
                 
                 keyboard.append([
                     InlineKeyboardButton(f"✏️ {real_idx}층 수정", callback_data=f"EDIT_Q:{ticker}:{item.get('date')}"),
@@ -148,7 +150,7 @@ class TelegramView:
     def get_queue_action_confirm_menu(self, ticker, target_date, qty, price):
         short_date = target_date[:10]
         msg = f"🗑️ <b>[{ticker} 지층 부분 삭제 확인]</b>\n\n"
-        msg += f"선택하신 <b>[{short_date}]</b> 지층 (<b>{qty}주 / ${price:.2f}</b>) 데이터를 장부에서 도려내시겠습니까?\n"
+        msg += f"선택하신 <b>[{short_date}]</b> 지층 (<b>{qty}주 / {_fmt_money(price, 2)}</b>) 데이터를 장부에서 도려내시겠습니까?\n"
         msg += "▫️ 실제 KIS 계좌의 주식은 매도되지 않습니다.\n"
         msg += "▫️ 계좌 수량과 장부가 어긋날 경우 /sync 시 비파괴 보정(CALIB)이 발동됩니다."
         
@@ -160,7 +162,7 @@ class TelegramView:
 
     def get_emergency_moc_confirm_menu(self, ticker, emergency_qty, emergency_price):
         msg = f"🚨 <b>[{ticker} 비상 수혈 최종 승인 대기]</b> 🚨\n\n"
-        msg += f"가장 최근에 물린 로트(Lot) <b>{emergency_qty}주</b> (평단 <b>${emergency_price:.2f}</b>)를 KIS 서버로 즉각 시장가(MOC) 강제 매도 전송합니다.\n\n"
+        msg += f"가장 최근에 물린 로트(Lot) <b>{emergency_qty}주</b> (평단 <b>{_fmt_money(emergency_price, 2)}</b>)를 KIS 서버로 즉각 시장가(MOC) 강제 매도 전송합니다.\n\n"
         msg += "⚠️ <b>포트폴리오 매니저 경고:</b>\n"
         msg += "1. 이 작업은 즉각 격발되며 취소할 수 없습니다.\n"
         msg += "2. 정규장/프리장 운영 시간에만 격발이 승인됩니다.\n"
@@ -257,13 +259,13 @@ class TelegramView:
         
         if total_locked > 0:
             real_cash = max(0, cash - total_locked)
-            header_msg += f"💵 한투 전체 잔고: ${cash:,.2f}\n"
-            header_msg += f"🔒 에스크로 격리금: -${total_locked:,.2f}\n"
-            header_msg += f"✅ 실질 가용 예산: ${real_cash:,.2f}\n"
+            header_msg += f"💵 한투 전체 잔고: {_fmt_money(cash, 2)}\n"
+            header_msg += f"🔒 에스크로 격리금: -{_fmt_money(total_locked, 2)}\n"
+            header_msg += f"✅ 실질 가용 예산: {_fmt_money(real_cash, 2)}\n"
         else:
-            header_msg += f"💵 주문가능금액: ${cash:,.2f}\n"
+            header_msg += f"💵 주문가능금액: {_fmt_money(cash, 2)}\n"
             
-        header_msg += f"🏛️ RP 투자권장: ${dynamic_rp_amount:,.2f}\n"
+        header_msg += f"🏛️ RP 투자권장: {_fmt_money(dynamic_rp_amount, 2)}\n"
         header_msg += "----------------------------\n\n"
         
         body_msg = ""
@@ -297,29 +299,29 @@ class TelegramView:
                 body_msg += "❗ <i>에스크로 금고가 바닥나 강제 매도를 통해 현금을 생성합니다.</i>\n\n"
             
             if is_rev:
-                bdg_txt = f"리버스 잔금쿼터: ${t_info['one_portion']:,.0f}"
+                bdg_txt = f"리버스 잔금쿼터: {_fmt_money(t_info['one_portion'], 0)}"
                 icon = "🩸" if proc_status == "🩸리버스(긴급수혈)" else "🔄"
                 body_msg += f"{icon} <b>[{t}] {v_mode_display} 리버스</b>\n"
                 body_msg += f"📈 진행: <b>{t_info['t_val']:.4f}T / {int(t_info['split'])}분할</b>\n"
             elif v_mode == "V_REV":
-                bdg_txt = f"1회(1배수) 예산: ${t_info['one_portion']:,.0f}"
+                bdg_txt = f"1회(1배수) 예산: {_fmt_money(t_info['one_portion'], 0)}"
                 body_msg += f"{main_icon} <b>[{t}] {v_mode_display}</b>\n"
                 body_msg += f"📈 큐(Queue): <b>{t_info.get('v_rev_q_lots', 0)}개 로트 대기 중 (총 {t_info.get('v_rev_q_qty', 0)}주)</b>\n"
             else:
-                bdg_txt = f"당일 예산: ${t_info['one_portion']:,.0f}"
+                bdg_txt = f"당일 예산: {_fmt_money(t_info['one_portion'], 0)}"
                 body_msg += f"{main_icon} <b>[{t}] {v_mode_display}</b>\n"
                 body_msg += f"📈 진행: <b>{t_info['t_val']:.4f}T / {int(t_info['split'])}분할</b>\n"
             
-            body_msg += f"💵 총 시드: ${t_info['seed']:,.0f}\n"
+            body_msg += f"💵 총 시드: {_fmt_money(t_info['seed'], 0)}\n"
             body_msg += f"🛒 <b>{bdg_txt}</b>\n"
             
             escrow = t_info.get('escrow', 0.0)
             if escrow > 0:
-                body_msg += f"🔐 내 금고 보호액: ${escrow:,.2f}\n"
+                body_msg += f"🔐 내 금고 보호액: {_fmt_money(escrow, 2)}\n"
             elif is_rev and proc_status == "🩸리버스(긴급수혈)":
                 body_msg += "🔐 내 금고 보호액: $0.00 (Empty 🚨)\n"
                 
-            body_msg += f"💰 현재 ${t_info['curr']:,.2f} / 평단 ${t_info['avg']:,.2f} ({t_info['qty']}주)\n"
+            body_msg += f"💰 현재 {_fmt_money(t_info['curr'], 2)} / 평단 {_fmt_money(t_info['avg'], 2)} ({t_info['qty']}주)\n"
             
             day_high = t_info.get('day_high', 0.0)
             day_low = t_info.get('day_low', 0.0)
@@ -330,18 +332,18 @@ class TelegramView:
                 low_pct = (day_low - prev_close) / prev_close * 100
                 high_sign = "+" if high_pct > 0 else ""
                 low_sign = "+" if low_pct > 0 else ""
-                body_msg += f"📈 금일 고가: ${day_high:.2f} ({high_sign}{high_pct:.2f}%)\n"
-                body_msg += f"📉 금일 저가: ${day_low:.2f} ({low_sign}{low_pct:.2f}%)\n"
+                body_msg += f"📈 금일 고가: {_fmt_money(day_high, 2)} ({high_sign}{high_pct:.2f}%)\n"
+                body_msg += f"📉 금일 저가: {_fmt_money(day_low, 2)} ({low_sign}{low_pct:.2f}%)\n"
 
             sign = "+" if t_info['profit_amt'] >= 0 else "-"
             icon = "🔺" if t_info['profit_amt'] >= 0 else "🔻"
-            body_msg += f"{icon} 수익: {sign}{abs(t_info['profit_pct']):.2f}% ({sign}${abs(t_info['profit_amt']):,.2f})\n\n"
+            body_msg += f"{icon} 수익: {sign}{abs(t_info['profit_pct']):.2f}% ({sign}{_fmt_money(abs(t_info['profit_amt']), 2)})\n\n"
             
             sniper_status_txt = t_info.get('upward_sniper', 'OFF')
             
             if v_mode != "V_REV":
                 if is_rev:
-                    body_msg += f"⚙️ 🌟 5일선 별지점: ${t_info['star_price']:.2f} | 🎯감시: {sniper_status_txt}\n"
+                    body_msg += f"⚙️ 🌟 5일선 별지점: {_fmt_money(t_info['star_price'], 2)} | 🎯감시: {sniper_status_txt}\n"
                 else:
                     body_msg += f"⚙️ 🎯 {t_info['target']}% | ⭐ {t_info['star_pct']}% | 🎯감시: {sniper_status_txt}\n"
                     
@@ -351,7 +353,7 @@ class TelegramView:
                     elif tracking_info.get('is_trailing', False):
                         peak_price = tracking_info.get('peak_price', 0.0)
                         trigger_price = tracking_info.get('trigger_price', 0.0)
-                        body_msg += f"🎯 상방 추적(${trigger_price:.2f}) 중 (고가: ${peak_price:.2f})\n"
+                        body_msg += f"🎯 상방 추적({_fmt_money(trigger_price, 2)}) 중 (고가: {_fmt_money(peak_price, 2)})\n"
                     else:
                         if is_rev:
                             sn_target = t_info['star_price']
@@ -360,7 +362,7 @@ class TelegramView:
                             sn_target = max(t_info['star_price'], safe_floor)
                             
                         if sn_target > 0:
-                            body_msg += f"🎯 상방 스나이퍼: ${sn_target:.2f} 이상 대기\n"
+                            body_msg += f"🎯 상방 스나이퍼: {_fmt_money(sn_target, 2)} 이상 대기\n"
             elif v_mode == "V_REV":
                 body_msg += "⚖️ <b>역추세 LIFO 큐(Queue) 엔진 스탠바이</b>\n"
                 if not is_manual_vwap:
@@ -380,8 +382,8 @@ class TelegramView:
                     avwap_budget = t_info.get('avwap_budget', 0.0)
                     
                     body_msg += "\n⚔️ <b>[ 하이브리드 AVWAP 암살자 가동 중 ]</b>\n"
-                    body_msg += f"▫️ 잉여 예산(100%): ${avwap_budget:,.0f}\n"
-                    body_msg += f"▫️ 독립 물량: {avwap_qty}주 (평단 ${avwap_avg:.2f})\n"
+                    body_msg += f"▫️ 잉여 예산(100%): {_fmt_money(avwap_budget, 0)}\n"
+                    body_msg += f"▫️ 독립 물량: {avwap_qty}주 (평단 {_fmt_money(avwap_avg, 2)})\n"
                     body_msg += f"▫️ 작전 상태: <b>{avwap_status}</b>\n"
                     
                 if is_trade_active:
@@ -405,11 +407,11 @@ class TelegramView:
                         type_str = "" if o['type'] == 'LIMIT' else f"({o['type']})"
                         type_disp = f" {type_str}" if type_str else ""
                         
-                        body_msg += f" {ico} {desc}: <b>${o['price']} x {o['qty']}주</b>{type_disp}\n"
+                        body_msg += f" {ico} {desc}: <b>{_fmt_money(o['price'], 2)} x {o['qty']}주</b>{type_disp}\n"
     
                     if jup_orders:
                         prices = sorted([o['price'] for o in jup_orders], reverse=True)
-                        body_msg += f" 🧹 줍줍({len(jup_orders)}개): <b>${prices[0]} ~ ${prices[-1]} (LOC)</b>\n"
+                        body_msg += f" 🧹 줍줍({len(jup_orders)}개): <b>{_fmt_money(prices[0], 2)} ~ {_fmt_money(prices[-1], 2)} (LOC)</b>\n"
                     
                     if is_trade_active:
                         if t_info.get('is_locked', False):
@@ -548,7 +550,7 @@ class TelegramView:
         for item in agg_list[:50]: 
             d_str = item['date'][5:].replace('-', '.')
             s_str = "🔴매수" if item['side'] == 'BUY' else "🔵매도"
-            msg += f"{item['no']:<3} {d_str} {s_str} ${item['avg']:<6.2f} {item['qty']}주\n"
+            msg += f"{item['no']:<3} {d_str} {s_str} {_fmt_money(item['avg'], 2):<12} {item['qty']}주\n"
             
         if len(agg_list) > 50:
             msg += "... (이전 기록 생략)\n"
@@ -562,14 +564,14 @@ class TelegramView:
                 msg += f"▪️ 리버스 T값 : <b>{t_val} T</b> (특수연산 적용됨)\n"
             else:
                 msg += f"▪️ <b>현재 T값 : {t_val} T</b> ({int(split)}분할)\n"
-            msg += f"▪️ 보유 수량 : {qty} 주 (평단 ${avg:.2f})\n"
+            msg += f"▪️ 보유 수량 : {qty} 주 (평단 {_fmt_money(avg, 2)})\n"
         else:
             profit = sold - invested
             pct = (profit/invested*100) if invested > 0 else 0
             sign = "+" if profit >= 0 else "-"
-            msg += f"▪️ <b>최종수익: {sign}${abs(profit):,.2f} ({pct:.2f}%)</b>\n"
+            msg += f"▪️ <b>최종수익: {sign}{_fmt_money(abs(profit), 2)} ({pct:.2f}%)</b>\n"
 
-        msg += f"▪️ 총 매수액 : ${invested:,.2f}\n▪️ 총 매도액 : ${sold:,.2f}\n"
+        msg += f"▪️ 총 매수액 : {_fmt_money(invested, 2)}\n▪️ 총 매도액 : {_fmt_money(sold, 2)}\n"
 
         keyboard = []
         if not is_history:
@@ -622,7 +624,7 @@ class TelegramView:
         sign = "-" if profit < 0 else "+"
         
         y_profit = y_title + 105
-        draw.text((W/2, y_profit), f"{sign}${abs(profit):,.2f}", font=f_p, fill=color, anchor="mm")
+        draw.text((W/2, y_profit), f"{sign}{_fmt_money(abs(profit), 2)}", font=f_p, fill=color, anchor="mm")
         
         y_yield = y_profit + 75
         draw.text((W/2, y_yield), f"YIELD {sign}{abs(yield_pct):,.2f}%", font=f_y, fill=color, anchor="mm")
@@ -630,11 +632,11 @@ class TelegramView:
         y_box = y_yield + 60
         
         draw.rectangle([40, y_box, 290, y_box + 100], fill="#2A2F3D")
-        draw.text((165, y_box + 35), f"${invested:,.2f}", font=f_b_val, fill="white", anchor="mm")
+        draw.text((165, y_box + 35), f"{_fmt_money(invested, 2)}", font=f_b_val, fill="white", anchor="mm")
         draw.text((165, y_box + 75), "TOTAL INVESTED", font=f_b_lbl, fill="#8E8E93", anchor="mm")
         
         draw.rectangle([310, y_box, 560, y_box + 100], fill="#2A2F3D")
-        draw.text((435, y_box + 35), f"${revenue:,.2f}", font=f_b_val, fill="white", anchor="mm")
+        draw.text((435, y_box + 35), f"{_fmt_money(revenue, 2)}", font=f_b_val, fill="white", anchor="mm")
         draw.text((435, y_box + 75), "TOTAL REVENUE", font=f_b_lbl, fill="#8E8E93", anchor="mm")
         
         draw.text((W/2, H - 35), f"{end_date}", font=f_b_lbl, fill="#636366", anchor="mm")
