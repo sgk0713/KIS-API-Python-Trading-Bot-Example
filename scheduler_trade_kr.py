@@ -216,6 +216,66 @@ async def scheduled_kr_force_reset(context):
         )
 
 
+async def scheduled_kr_closing_dispatch(context):
+    """
+    매일 15:25 KST 평일 — LOC/MOC 지연 주문 일괄 발송.
+
+    broker_kiwoom._append_pending_order 가 저장한 대기열(data/pending_orders_kiwoom.json)
+    을 읽어 원래 의도대로 키움에 실 송신:
+      - LOC → LIMIT (가격 유지)
+      - MOC → MARKET (시장가)
+
+    이 구조 덕분에 09:05 ~ 15:25 사이 봇 재시작/크래시가 일어나도 지연 주문 유실 없음
+    (파일이 디스크에 persist 되어 있음).
+    """
+    from broker_kiwoom import _drain_pending_orders
+
+    now = datetime.datetime.now(_KST)
+    chat_id = context.job.chat_id
+
+    if not is_kr_trading_day():
+        return
+
+    orders = _drain_pending_orders()
+    if not orders:
+        return  # 대기 주문 없음 — 조용히 종료
+
+    app_data = context.job.data
+    broker = app_data['broker']
+    tx_lock = app_data['tx_lock']
+
+    lines = [f"⏰ <b>[{now.strftime('%H:%M')}] 마감 지연 주문 일괄 발송</b> ({len(orders)}건)"]
+
+    async with tx_lock:
+        for o in orders:
+            ticker = o['ticker']
+            side = o['side']
+            qty = o['qty']
+            price = o['price']
+            otype = o['original_type']
+            desc = o.get('desc', '')
+
+            try:
+                if otype == "MOC":
+                    res = await asyncio.to_thread(broker.send_order, ticker, side, qty, 0, "MARKET")
+                    price_str = "시장가"
+                else:  # LOC
+                    res = await asyncio.to_thread(broker.send_order, ticker, side, qty, price, "LIMIT")
+                    price_str = f"{int(price):,}원"
+
+                ok = res.get('rt_cd') == '0'
+                mark = '✅' if ok else '❌'
+                lines.append(f"   {mark} {ticker} {side} {qty}주 @ {price_str} [{otype}→{'MARKET' if otype=='MOC' else 'LIMIT'}]")
+                if not ok:
+                    lines.append(f"      └ {res.get('msg1', '')[:80]}")
+            except Exception as e:
+                lines.append(f"   💥 {ticker} {side} {qty}주 예외: {e}")
+
+            await asyncio.sleep(0.3)  # API 레이트 제한 대비 스태거
+
+    await context.bot.send_message(chat_id=chat_id, text='\n'.join(lines), parse_mode='HTML')
+
+
 async def scheduled_kr_auto_sync(context):
     """
     KRX 개장 직전(08:45 KST) 장부-잔고 자동 동기화.

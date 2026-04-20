@@ -183,6 +183,25 @@ def main():
             cfg._save_json(cfg.FILES["COMPOUND_CFG"], {"418660": 70.0})
         if not os.path.exists(cfg.FILES["VERSION_CFG"]):
             cfg._save_json(cfg.FILES["VERSION_CFG"], {"418660": "V14"})
+
+        # 기존 보유종목 장부 자동 복원 (broker 잔고 있는데 ledger 비어있으면 INIT 스냅샷)
+        try:
+            _, _holdings = broker.get_account_balance()
+            if _holdings:
+                for _t in cfg.get_active_tickers():
+                    if _t not in _holdings:
+                        continue
+                    _existing = [r for r in cfg.get_ledger() if r['ticker'] == _t]
+                    if _existing:
+                        continue  # 이미 장부에 있으면 건너뜀
+                    _info = _holdings[_t]
+                    _qty = int(_info.get('qty') or 0)
+                    _avg = float(_info.get('avg') or 0.0)
+                    if _qty > 0 and _avg > 0:
+                        cfg.overwrite_ledger(_t, _qty, _avg)
+                        print(f"  └ 장부 자동 복원: {_t} {_qty}주 @ {int(_avg):,}원 (INIT 스냅샷)")
+        except Exception as _e:
+            print(f"  ⚠️ 장부 자동 복원 중 오류 (무시하고 진행): {_e}")
     else:
         broker = KoreaInvestmentBroker(APP_KEY, APP_SECRET, CANO, ACNT_PRDT_CD)
         print(f"🏦 [브로커] 한국투자증권 ({'모의투자' if ACNT_PRDT_CD != '01' else '운영'})")
@@ -261,6 +280,7 @@ def main():
                 scheduled_kr_regular_trade,
                 scheduled_kr_auto_sync,
                 scheduled_kr_force_reset,
+                scheduled_kr_closing_dispatch,
             )
             # 08:45 KST — 장부 자동 동기화 (졸업 감지 + 평단가 교정)
             jq.run_daily(
@@ -278,6 +298,14 @@ def main():
                 chat_id=cfg.get_chat_id(),
                 data=app_data,
             )
+            # 15:25 KST — LOC/MOC 지연 주문 일괄 발송 (디스크 큐 드레인)
+            jq.run_daily(
+                scheduled_kr_closing_dispatch,
+                time=datetime.time(15, 25, tzinfo=kst),
+                days=(0, 1, 2, 3, 4),
+                chat_id=cfg.get_chat_id(),
+                data=app_data,
+            )
             # 17:00 KST — 일일 초기화 & 리버스 관리 (매매 잠금 해제, day_count 증가, 탈출 체크)
             jq.run_daily(
                 scheduled_kr_force_reset,
@@ -286,7 +314,7 @@ def main():
                 chat_id=cfg.get_chat_id(),
                 data=app_data,
             )
-            print("ℹ️  [스케줄러] KIWOOM 모드 — 08:45 sync + 09:05 장전 + 17:00 force_reset 등록")
+            print("ℹ️  [스케줄러] KIWOOM 모드 — 08:45 sync + 09:05 장전 + 15:25 마감 dispatch + 17:00 force_reset")
             print("   US 전용 스케줄러(volatility_scan / vwap / sniper / after-market 등)는 미등록")
         else:
             # === KIS 전용 (기존 동작 유지) ===
