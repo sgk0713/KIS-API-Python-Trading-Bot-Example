@@ -65,6 +65,39 @@ def _is_kr_ticker(t):
     return isinstance(t, str) and t.isdigit() and len(t) == 6
 
 
+def _merge_star_sell_to_target(orders):
+    """
+    KR 환경 특화 후처리: 🌟별값매도를 제거하고 해당 수량을 🎯목표매도에 합병.
+
+    이유: KR 호가단위(예: 20K~50K 구간 50원)가 V14의 0.01센트 분리 방어막을
+    무력화시켜 별값매수 ↔ 별값매도가 동일 tick 버킷으로 떨어져 자전거래 충돌이
+    발생. 또한 KR 운용 초기(보유수량 小) 단계에선 2단 분할 익절의 실익이 작음.
+
+    동작: SELL 별값 → 제거. 그 수량을 SELL 목표매도 주문에 합산.
+          SELL 목표매도가 없으면 별값을 그냥 탈락시킴.
+    """
+    star_sell_qty = 0
+    filtered = []
+    target_sell_idx = None
+
+    for o in orders:
+        side = o.get('side')
+        desc = o.get('desc', '')
+        # V14 고유 이모지 prefix로 판별 (substring 검색은 병합 desc에 재매치되어 비멱등)
+        if side == 'SELL' and desc.startswith('🌟'):
+            star_sell_qty += int(o.get('qty', 0))
+            continue
+        if side == 'SELL' and desc.startswith('🎯'):
+            target_sell_idx = len(filtered)
+        filtered.append(o)
+
+    if star_sell_qty > 0 and target_sell_idx is not None:
+        filtered[target_sell_idx]['qty'] = int(filtered[target_sell_idx]['qty']) + star_sell_qty
+        filtered[target_sell_idx]['desc'] = f"{filtered[target_sell_idx]['desc']}(+별값{star_sell_qty}통합)"
+
+    return filtered
+
+
 async def scheduled_kr_regular_trade(context):
     """
     KRX 정규장 개시 직후 (09:05 KST 등록 가정) V14 일일 주문을 장전.
@@ -157,6 +190,8 @@ async def scheduled_kr_regular_trade(context):
                 available_cash=allocated,
             )
             orders = plan.get('core_orders', []) + plan.get('bonus_orders', [])
+            # KR 환경 후처리: 별값매도 제거 + 목표매도 수량 흡수 (자전거래 방지)
+            orders = _merge_star_sell_to_target(orders)
 
             status = plan.get('process_status', '')
             t_val = plan.get('t_val', 0.0)
