@@ -167,6 +167,22 @@ def main():
         from broker_kiwoom import KiwoomBroker
         broker = KiwoomBroker(KIWOOM_APPKEY, KIWOOM_SECRETKEY, KIWOOM_ACCOUNT_NO, is_mock=KIWOOM_IS_MOCK)
         print(f"🏦 [브로커] 키움 REST API ({'모의투자' if KIWOOM_IS_MOCK else '운영'})")
+
+        # KIWOOM 첫 기동 시 KR 기본값 자동 초기화 (파일 부재 시에만)
+        if not os.path.exists(cfg.FILES["TICKER"]):
+            cfg.set_active_tickers(["418660"])
+            print("  └ active_tickers 초기화: [418660]")
+        if not os.path.exists(cfg.FILES["SEED_CFG"]):
+            cfg._save_json(cfg.FILES["SEED_CFG"], {"418660": 10_000_000.0})
+            print("  └ seed_config 초기화: {418660: 10,000,000원}")
+        if not os.path.exists(cfg.FILES["PROFIT_CFG"]):
+            cfg._save_json(cfg.FILES["PROFIT_CFG"], {"418660": 7.0})
+        if not os.path.exists(cfg.FILES["SPLIT"]):
+            cfg._save_json(cfg.FILES["SPLIT"], {"418660": 40.0})
+        if not os.path.exists(cfg.FILES["COMPOUND_CFG"]):
+            cfg._save_json(cfg.FILES["COMPOUND_CFG"], {"418660": 70.0})
+        if not os.path.exists(cfg.FILES["VERSION_CFG"]):
+            cfg._save_json(cfg.FILES["VERSION_CFG"], {"418660": "V14"})
     else:
         broker = KoreaInvestmentBroker(APP_KEY, APP_SECRET, CANO, ACNT_PRDT_CD)
         print(f"🏦 [브로커] 한국투자증권 ({'모의투자' if ACNT_PRDT_CD != '01' else '운영'})")
@@ -239,10 +255,19 @@ def main():
 
         jq.run_daily(scheduled_self_cleaning, time=datetime.time(6, 0, tzinfo=kst), days=tuple(range(7)), chat_id=cfg.get_chat_id(), data=app_data)
 
-        # 2. 시장별 스케줄러 — BROKER=KIS일 때만 US/NYSE 전용 매매 스케줄러 등록
+        # 2. 시장별 스케줄러 — BROKER에 따라 분기
         if BROKER_CHOICE == "KIWOOM":
-            print("ℹ️  [스케줄러] KIWOOM 모드 — US 전용 매매 스케줄러(volatility_scan / vwap / sniper / after-market / regular_trade / auto_sync / force_reset) 등록 스킵")
-            print("   KR 매매 스케줄러는 Task #8에서 추가 예정. 현재는 토큰 체크 + 셀프클리닝 + 텔레그램 커맨드만 활성.")
+            from scheduler_trade_kr import scheduled_kr_regular_trade
+            # KRX 정규장 개시 5분 후 (09:05 KST) 일일 주문 장전
+            jq.run_daily(
+                scheduled_kr_regular_trade,
+                time=datetime.time(9, 5, tzinfo=kst),
+                days=(0, 1, 2, 3, 4),
+                chat_id=cfg.get_chat_id(),
+                data=app_data,
+            )
+            print("ℹ️  [스케줄러] KIWOOM 모드 — 09:05 KST KR 일일 주문 장전 등록 완료")
+            print("   US 전용 스케줄러(volatility_scan / vwap / sniper / after-market 등)는 미등록")
         else:
             # === KIS 전용 (기존 동작 유지) ===
             jq.run_daily(scheduled_auto_sync_summer, time=datetime.time(8, 30, tzinfo=kst), days=tuple(range(7)), chat_id=cfg.get_chat_id(), data=app_data)
