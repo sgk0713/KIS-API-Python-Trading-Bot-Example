@@ -257,19 +257,24 @@ class KiwoomBroker:
             return t
         return f"{t}.KS"
 
-    def _round_to_krw_tick(self, price):
-        """KRX 가격대별 호가단위로 내림 (매수/매도 공용, 보수적 내림)."""
+    def _round_to_krw_tick(self, price, side=None):
+        """KRX 가격대별 호가단위로 반올림.
+        side='SELL' → 올림 (ceil)    매도자 유리, 목표가 상승 방향
+        side='BUY' / None → 내림 (floor) 매수자 유리, 지정가 하락 방향"""
         if price is None or price <= 0:
             return 0
-        p = int(price)
-        if p < 2000:       tick = 1
-        elif p < 5000:     tick = 5
-        elif p < 20000:    tick = 10
-        elif p < 50000:    tick = 50
-        elif p < 200000:   tick = 100
-        elif p < 500000:   tick = 500
+        p = float(price)
+        pi = int(p)
+        if pi < 2000:      tick = 1
+        elif pi < 5000:    tick = 5
+        elif pi < 20000:   tick = 10
+        elif pi < 50000:   tick = 50
+        elif pi < 200000:  tick = 100
+        elif pi < 500000:  tick = 500
         else:              tick = 1000
-        return (p // tick) * tick
+        if side == "SELL":
+            return int(math.ceil(p / tick)) * tick
+        return int(p // tick) * tick
 
     # ==========================================================
     # 잔고 / 보유종목
@@ -457,7 +462,7 @@ class KiwoomBroker:
             final_price = 0  # 시장가는 가격 없음
         else:  # LIMIT 및 그 외 모든 케이스
             ord_dvsn = _KRX_ORD_LIMIT  # "00"
-            final_price = self._round_to_krw_tick(price)
+            final_price = self._round_to_krw_tick(price, side=side)
 
         body = {
             "dmst_stex_tp": "KRX",
