@@ -43,16 +43,27 @@ class TelegramView:
         return ImageFont.load_default()
 
     def get_start_message(self, target_hour, season_icon, latest_version):
-        dst_state = "🌞서머타임 ON" if target_hour == 17 else "❄️서머타임 OFF"
-        
+        import market_context as mc
+
         msg = f"🌌 [ 인피니트 스노우볼 {latest_version} ]\n"
         msg += "💠 2대 퀀트 코어 + AVWAP 하이브리드\n\n"
-        
-        msg += f"🕒 [ 운영 스케줄 ({dst_state}) ]\n"
-        msg += "🔹 6시간 간격 : 🔑 API 토큰 자동 갱신\n"
-        msg += "🔹 08:30 : 📝 잔고 동기화 & 자동 복리\n"
-        msg += f"🔹 {target_hour}:00 : 🔐 매매 초기화 및 변동성 락온\n"
-        msg += f"🔹 {target_hour}:05 : 🌃 통합 주문 자동 실행\n\n"
+
+        if mc.is_kr():
+            # KR(키움) 실제 스케줄 — main.py 의 KIWOOM 분기와 일치
+            msg += "🕒 [ KRX 운영 스케줄 (KST) ]\n"
+            msg += "🔹 6시간 간격 : 🔑 API 토큰 자동 갱신\n"
+            msg += "🔹 08:45 : 📝 장부 동기화 & 졸업 자동 감지\n"
+            msg += "🔹 09:05 : 🌃 V14 일일 주문 장전\n"
+            msg += "🔹 15:25 : ⏰ 마감 지연 주문(LOC/MOC) 일괄 발송\n"
+            msg += "🔹 17:00 : 🔓 매매 잠금 해제 & 리버스 관리\n\n"
+        else:
+            # KIS(US) 원본 스케줄
+            dst_state = "🌞서머타임 ON" if target_hour == 17 else "❄️서머타임 OFF"
+            msg += f"🕒 [ 운영 스케줄 ({dst_state}) ]\n"
+            msg += "🔹 6시간 간격 : 🔑 API 토큰 자동 갱신\n"
+            msg += "🔹 08:30 : 📝 잔고 동기화 & 자동 복리\n"
+            msg += f"🔹 {target_hour}:00 : 🔐 매매 초기화 및 변동성 락온\n"
+            msg += f"🔹 {target_hour}:05 : 🌃 통합 주문 자동 실행\n\n"
         
         msg += "🛠 [ 주요 명령어 ]\n"
         msg += "▶️ /sync : 📜 통합 지시서 조회\n"

@@ -56,36 +56,47 @@ class TelegramController:
         return update.effective_chat.id == int(self.admin_id)
 
     def _get_dst_info(self):
+        import market_context as mc
+        if mc.is_kr():
+            # KR은 DST 없음 — 스케줄 시각 안내용 더미 target_hour만 반환
+            return (17, "🇰🇷 <b>KRX 기준 (DST 없음)</b>")
         est = pytz.timezone('US/Eastern')
         now_est = datetime.datetime.now(est)
         is_dst = now_est.dst() != datetime.timedelta(0)
-        
         if is_dst:
             return (17, "🌞 <b>서머타임 적용 (Summer)</b>")
-        else:
-            return (18, "❄️ <b>서머타임 해제 (Winter)</b>")
+        return (18, "❄️ <b>서머타임 해제 (Winter)</b>")
 
     def _get_market_status(self):
-        est = pytz.timezone('US/Eastern')
-        now = datetime.datetime.now(est)
-        nyse = mcal.get_calendar('NYSE')
-        schedule = nyse.schedule(start_date=now.date(), end_date=now.date())
-        
+        import market_context as mc
+        tz = mc.get_tz()
+        cal = mc.get_calendar()
+        now = datetime.datetime.now(tz)
+        schedule = cal.schedule(start_date=now.date(), end_date=now.date())
+
         if schedule.empty:
             return "CLOSE", "⛔ 장휴일"
-        
-        market_open = schedule.iloc[0]['market_open'].astimezone(est)
-        market_close = schedule.iloc[0]['market_close'].astimezone(est)
-        pre_start = market_open.replace(hour=4, minute=0)
-        after_end = market_close.replace(hour=20, minute=0)
 
-        if pre_start <= now < market_open:
-            return "PRE", "🌅 프리마켓"
-        elif market_open <= now < market_close:
-            return "REG", "🔥 정규장"
-        elif market_close <= now < after_end:
-            return "AFTER", "🌙 애프터마켓"
+        market_open = schedule.iloc[0]['market_open'].astimezone(tz)
+        market_close = schedule.iloc[0]['market_close'].astimezone(tz)
+
+        if mc.is_kr():
+            # KR: 프리/애프터 개념 없음, 동시호가만 구분
+            if now < market_open:
+                return "PRE", "🌅 개장 대기"
+            if market_open <= now < market_close:
+                return "REG", "🔥 정규장"
+            return "CLOSE", "⛔ 장마감"
         else:
+            # US: 프리/애프터 포함
+            pre_start = market_open.replace(hour=4, minute=0)
+            after_end = market_close.replace(hour=20, minute=0)
+            if pre_start <= now < market_open:
+                return "PRE", "🌅 프리마켓"
+            if market_open <= now < market_close:
+                return "REG", "🔥 정규장"
+            if market_close <= now < after_end:
+                return "AFTER", "🌙 애프터마켓"
             return "CLOSE", "⛔ 장마감"
 
     def _calculate_budget_allocation(self, cash, tickers):
@@ -300,20 +311,23 @@ class TelegramController:
 
             tracking_cache = context.job_queue.jobs()[0].data.get('sniper_tracking', {}) if context.job_queue and context.job_queue.jobs() else {}
 
-            est = pytz.timezone('US/Eastern')
-            now_est = datetime.datetime.now(est)
-            
+            import market_context as mc
+            _tz = mc.get_tz()
+            now_market = datetime.datetime.now(_tz)
+
             is_sniper_active_time = False
             try:
-                nyse = mcal.get_calendar('NYSE')
-                schedule = nyse.schedule(start_date=now_est.date(), end_date=now_est.date())
+                _cal = mc.get_calendar()
+                schedule = _cal.schedule(start_date=now_market.date(), end_date=now_market.date())
                 if not schedule.empty:
-                    market_open = schedule.iloc[0]['market_open'].astimezone(est)
+                    market_open = schedule.iloc[0]['market_open'].astimezone(_tz)
                     switch_time = market_open + datetime.timedelta(minutes=50)
-                    if now_est >= switch_time:
+                    if now_market >= switch_time:
                         is_sniper_active_time = True
             except Exception:
-                if now_est.weekday() < 5 and now_est.time() >= datetime.time(10, 20):
+                # 시장별 개장 + 50분 기준 fallback (KR 09:50 / US 10:20)
+                _threshold = datetime.time(9, 50) if mc.is_kr() else datetime.time(10, 20)
+                if now_market.weekday() < 5 and now_market.time() >= _threshold:
                     is_sniper_active_time = True
 
             for t in sorted_tickers:
@@ -556,10 +570,11 @@ class TelegramController:
                 kst = pytz.timezone('Asia/Seoul')
                 now_kst = datetime.datetime.now(kst)
                 
-                est = pytz.timezone('US/Eastern')
-                now_est = datetime.datetime.now(est)
-                nyse = mcal.get_calendar('NYSE')
-                schedule = nyse.schedule(start_date=(now_est - datetime.timedelta(days=10)).date(), end_date=now_est.date())
+                import market_context as mc
+                _tz = mc.get_tz()
+                now_market = datetime.datetime.now(_tz)
+                _cal = mc.get_calendar()
+                schedule = _cal.schedule(start_date=(now_market - datetime.timedelta(days=10)).date(), end_date=now_market.date())
                 
                 if not schedule.empty:
                     last_trade_date = schedule.index[-1]
@@ -967,9 +982,7 @@ class TelegramController:
         
         status_msg = await update.message.reply_text("⏳ <b>실시간 시장 지표(HV/VXN) 연산 중...</b>", parse_mode='HTML')
         
-        est = pytz.timezone('US/Eastern')
-        now_est = datetime.datetime.now(est)
-
+        # ATR/dynamic target은 KR 미구현 — 기본 0으로 채움
         for t in active_tickers:
             atr_data[t] = (0.0, 0.0)
             dynamic_target_data[t] = None
@@ -1624,8 +1637,8 @@ class TelegramController:
                 ticker = parts[2]
                 self.cfg.apply_stock_split(ticker, val)
                 
-                est = pytz.timezone('US/Eastern')
-                today_str = datetime.datetime.now(est).strftime('%Y-%m-%d')
+                import market_context as mc
+                today_str = datetime.datetime.now(mc.get_tz()).strftime('%Y-%m-%d')
                 self.cfg.set_last_split_date(ticker, today_str)
                 
                 await update.message.reply_text(f"✅ [{ticker}] 수동 액면 보정 완료\n▫️ 모든 장부 기록이 {val}배 비율로 정밀하게 소급 조정되었습니다.")
