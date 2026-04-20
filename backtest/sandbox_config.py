@@ -16,11 +16,12 @@ class BacktestConfig(ConfigManager):
     """
 
     # 프로덕션 FILES 키 → 파일명 매핑 (부모 __init__ 없이 직접 정의)
+    # 파일명은 config.py ConfigManager.__init__ self.FILES 값의 basename 과 일치해야 함.
     _PRODUCTION_FILES = {
         "TOKEN": "token.dat",
         "CHAT_ID": "chat_id.dat",
-        "LEDGER": "ledger.json",
-        "HISTORY": "history.json",
+        "LEDGER": "manual_ledger.json",
+        "HISTORY": "manual_history.json",
         "SPLIT": "split_config.json",
         "TICKER": "active_tickers.json",
         "UPWARD_SNIPER": "upward_sniper.json",
@@ -133,6 +134,28 @@ class BacktestConfig(ConfigManager):
             "last_update_date": last_update_date,
         }
         self._save_json(self.FILES["REVERSE_CFG"], d)
+
+    def get_sniper_multiplier(self, ticker):
+        # 백테스트는 스나이퍼 배율 튜닝 없음 — 항상 1.0
+        # (부모 __init__ 미호출로 DEFAULT_SNIPER_MULTIPLIER 인스턴스 속성이 없어 AttributeError 방지)
+        return 1.0
+
+    def increment_reverse_day(self, ticker):
+        # 부모 구현이 market_context.now() (실시간) 를 사용하므로
+        # _sim_date 기반으로 완전 재구현.
+        state = self.get_reverse_state(ticker)
+        if not state.get("is_active"):
+            return False
+        today_str = self._today_str()
+        if state.get("last_update_date") == today_str:
+            return False
+        new_day = state.get("day_count", 0) + 1
+        self.set_reverse_state(
+            ticker, True, new_day,
+            state.get("exit_target", 0.0),
+            today_str,
+        )
+        return True
 
     def get_total_locked_cash(self, exclude_ticker=None):
         # 단일 티커 백테스트 — 항상 0
