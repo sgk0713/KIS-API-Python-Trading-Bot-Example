@@ -98,6 +98,132 @@ def _merge_star_sell_to_target(orders):
     return filtered
 
 
+async def scheduled_kr_auto_sync(context):
+    """
+    KRX 개장 직전(08:45 KST) 장부-잔고 자동 동기화.
+
+    원본 `telegram_bot.cmd_sync` / `scheduler_core.run_auto_sync` 의 핵심 로직을
+    KR 맥락에 맞게 이식. V_REV 큐 처리, 체결내역 calibration 등 KR 불필요 부분은 제외.
+
+    동작:
+      1) broker.get_account_balance() 로 실제 잔고 조회
+      2) 각 활성 KR 티커별로 장부 vs 잔고 비교
+      3) 졸업 감지: actual_qty == 0 AND ledger_qty > 0
+         → cfg.archive_graduation() 호출 → 복리 반영·명예전당 기록·장부 정리
+      4) 평단가 미세 오차(≥1원): cfg.calibrate_avg_price() 로 보정
+      5) 수량 불일치: 경고만 표시 (수동 /record 유도)
+    """
+    now = datetime.datetime.now(_KST)
+    chat_id = context.job.chat_id
+
+    if not is_kr_trading_day():
+        return  # 휴장일엔 조용히 스킵
+
+    app_data = context.job.data
+    cfg = app_data['cfg']
+    broker = app_data['broker']
+    tx_lock = app_data['tx_lock']
+
+    status_msg = await context.bot.send_message(
+        chat_id=chat_id,
+        text=f"📝 <b>[{now.strftime('%H:%M')}] 장부 자동 동기화 시작</b>",
+        parse_mode='HTML',
+    )
+
+    async with tx_lock:
+        cash, holdings = broker.get_account_balance()
+        if holdings is None:
+            await status_msg.edit_text(
+                "❌ <b>잔고 조회 실패</b> — 동기화 중단. 키움 API 상태 확인 필요.",
+                parse_mode='HTML',
+            )
+            return
+
+        active = [t for t in cfg.get_active_tickers() if _is_kr_ticker(t)]
+        if not active:
+            await status_msg.edit_text(
+                f"📝 <b>[{now.strftime('%H:%M')}] 동기화 완료</b>\n⚠️ 활성 KR 종목 없음",
+                parse_mode='HTML',
+            )
+            return
+
+        lines = [f"📝 <b>[{now.strftime('%H:%M')}] 장부 동기화 결과</b>"]
+
+        for ticker in active:
+            info = holdings.get(ticker, {}) or {}
+            actual_qty = int(float(info.get('qty') or 0))
+            actual_avg = float(info.get('avg') or 0.0)
+
+            recs = [r for r in cfg.get_ledger() if r['ticker'] == ticker]
+            ledger_qty, ledger_avg, _, _ = cfg.calculate_holdings(ticker, recs)
+
+            # 🎓 졸업 감지 — 실잔고 0 && 장부 포지션 존재
+            if actual_qty == 0 and ledger_qty > 0:
+                today_str = now.strftime('%Y-%m-%d')
+                prev_c = float(await asyncio.to_thread(broker.get_previous_close, ticker) or 0.0)
+
+                try:
+                    new_hist, added_seed = cfg.archive_graduation(ticker, today_str, prev_c)
+
+                    if new_hist:
+                        profit = float(new_hist.get('profit') or 0.0)
+                        yield_pct = float(new_hist.get('yield') or 0.0)
+
+                        if added_seed > 0:
+                            msg = (
+                                f"🎉 <b>[{ticker} 졸업 확인!]</b>\n"
+                                f"▫️ 잔고 0주 · 장부 {ledger_qty}주 → 전량 매도 완료\n"
+                                f"▫️ 실현손익: <b>{int(profit):,}원</b> (수익률 {yield_pct:.2f}%)\n"
+                                f"💸 <b>복리 +{int(added_seed):,}원</b> 이 시드에 가산되었습니다!"
+                            )
+                            lines.append(f"🎓 <b>{ticker}</b>: 졸업·복리 {int(added_seed):,}원")
+                        else:
+                            msg = (
+                                f"🎓 <b>[{ticker} 사이클 종료]</b>\n"
+                                f"▫️ 잔고 0주 · 장부 {ledger_qty}주 → 전량 매도 완료\n"
+                                f"▫️ 실현손익: <b>{int(profit):,}원</b> (수익률 {yield_pct:.2f}%) — 복리 미적용"
+                            )
+                            lines.append(f"🎓 <b>{ticker}</b>: 사이클 종료 (복리 없음)")
+
+                        await context.bot.send_message(chat_id, msg, parse_mode='HTML')
+                    else:
+                        # archive_graduation이 None 반환 — 대개 target_recs 없을 때
+                        all_recs = [r for r in cfg.get_ledger() if r['ticker'] != ticker]
+                        cfg._save_json(cfg.FILES["LEDGER"], all_recs)
+                        lines.append(f"⚠️ <b>{ticker}</b>: 강제 정산 (장부 정리)")
+
+                except Exception as e:
+                    logging.error(f"[{ticker}] 졸업 처리 오류: {e}")
+                    lines.append(f"❌ <b>{ticker}</b>: 졸업 처리 실패 — {e}")
+
+                continue
+
+            # ✓ 정상 일치
+            if actual_qty > 0 and actual_qty == ledger_qty:
+                price_diff = abs(actual_avg - ledger_avg)
+                if price_diff >= 1.0:
+                    cfg.calibrate_avg_price(ticker, actual_avg)
+                    lines.append(
+                        f"🔧 <b>{ticker}</b>: 평단가 교정 ({int(price_diff):,}원 차이)"
+                    )
+                else:
+                    lines.append(f"✓ <b>{ticker}</b>: 일치 ({actual_qty}주 @ {int(actual_avg):,}원)")
+
+            # ○ 포지션 없음
+            elif actual_qty == 0 and ledger_qty == 0:
+                lines.append(f"○ <b>{ticker}</b>: 포지션 없음")
+
+            # ⚠️ 수량 불일치 (수동 매매 또는 부분체결 상황)
+            else:
+                lines.append(
+                    f"⚠️ <b>{ticker}</b>: 수량 불일치 (잔고 {actual_qty}주 vs 장부 {ledger_qty}주)\n"
+                    f"   └ 텔레그램 /record 로 장부 복원 권장"
+                )
+
+        lines.append(f"\n💰 주문가능금액: <b>{int(cash):,}원</b>")
+        await status_msg.edit_text('\n'.join(lines), parse_mode='HTML')
+
+
 async def scheduled_kr_regular_trade(context):
     """
     KRX 정규장 개시 직후 (09:05 KST 등록 가정) V14 일일 주문을 장전.
