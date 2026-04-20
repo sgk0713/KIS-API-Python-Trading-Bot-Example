@@ -21,6 +21,66 @@ import shutil
 import pandas as pd
 
 # ==========================================================
+# 지연 주문 디스크 큐 (LOC/MOC 의 15:25 KST 지연 발송용)
+# ==========================================================
+_PENDING_FILE = "data/pending_orders_kiwoom.json"
+_pending_lock = threading.Lock()
+
+
+def _append_pending_order(ticker, side, qty, price, original_type, desc=""):
+    """지연 발송 대기열에 주문 1건 추가 (atomic)."""
+    with _pending_lock:
+        today = datetime.datetime.now(pytz.timezone('Asia/Seoul')).strftime('%Y-%m-%d')
+        data = {"date": today, "orders": []}
+        if os.path.exists(_PENDING_FILE):
+            try:
+                with open(_PENDING_FILE, 'r', encoding='utf-8') as f:
+                    saved = json.load(f)
+                if saved.get('date') == today:
+                    data = saved
+            except Exception:
+                pass
+        data['orders'].append({
+            "ticker": str(ticker),
+            "side": side,
+            "qty": int(qty),
+            "price": float(price or 0),
+            "original_type": original_type,
+            "desc": desc,
+            "submitted_at": datetime.datetime.now(pytz.timezone('Asia/Seoul')).isoformat(),
+        })
+        dir_name = os.path.dirname(_PENDING_FILE) or "."
+        if not os.path.exists(dir_name):
+            os.makedirs(dir_name, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=dir_name, text=True)
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(fd)
+        os.replace(tmp, _PENDING_FILE)
+        print(f"⏰ [Kiwoom 마감{original_type} 큐] {ticker} {side} {qty}주 @ {int(price):,}원 저장 (총 {len(data['orders'])}건)")
+
+
+def _drain_pending_orders():
+    """대기 중인 주문 전부 꺼내고 파일 초기화. 당일 항목만 반환 (stale 자동 제거)."""
+    with _pending_lock:
+        if not os.path.exists(_PENDING_FILE):
+            return []
+        today = datetime.datetime.now(pytz.timezone('Asia/Seoul')).strftime('%Y-%m-%d')
+        try:
+            with open(_PENDING_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        except Exception:
+            return []
+        orders = data.get('orders', []) if data.get('date') == today else []
+        # 파일 클리어 (다음 사이클을 위해)
+        try:
+            os.remove(_PENDING_FILE)
+        except Exception:
+            pass
+        return orders
+
+# ==========================================================
 # 키움 REST API 엔드포인트 / api-id 상수
 # ----------------------------------------------------------
 # ✅ 확정 (공식 가이드)
@@ -45,14 +105,14 @@ _API_IDS = {
     "ORDER_AMEND":      "kt10002",
     "ORDER_CANCEL":     "kt10003",
     # ✅ 계좌 계열 (URI: /api/dostk/acnt)
-    "BALANCE_CASH":     "kt00001",  # 예수금상세 (ord_alow_amt 등)
-    "BALANCE_HOLDINGS": "kt00018",  # 계좌평가잔고 (acnt_evlt_remn_indv_tot 배열)
-    "EXEC_HISTORY":     "kt00009",  # 체결내역
-    # ⚠️ 미매핑 (조회 호출 시 안전 디폴트 반환)
-    "UNFILLED_ORDERS":  None,  # TODO: 미체결 조회 api-id
-    "CURRENT_PRICE":    None,  # TODO: 주식 현재가 조회 (yfinance가 주력이라 급하지 않음)
-    "ORDER_BOOK":       None,  # TODO: 호가 조회
-    "DAILY_CANDLE":     "ka10081",  # ✅ 주식 일봉 차트 (URI: /api/dostk/chart)
+    "BALANCE_CASH":     "kt00001",  # 예수금상세 → ord_alow_amt
+    "BALANCE_HOLDINGS": "kt00018",  # 계좌평가잔고 → acnt_evlt_remn_indv_tot[]
+    "UNFILLED_ORDERS":  "ka10075",  # 미체결 주문 조회 → oso[]
+    "EXEC_HISTORY":     "kt00009",  # 체결내역 → acnt_ord_cntr_prst_array[]
+    # 시세 계열 (yfinance 주력이라 미구현)
+    "CURRENT_PRICE":    None,
+    "ORDER_BOOK":       None,
+    "DAILY_CANDLE":     "ka10081",  # 주식 일봉 차트 (/api/dostk/chart)
 }
 
 # KRX 주문 종류(trde_tp) — 지정가/시장가. LOC/MOC는 15:25 지연 LIMIT로 귀결.
@@ -414,24 +474,10 @@ class KiwoomBroker:
         return {'rt_cd': rt_cd, 'msg1': msg1, 'odno': odno}
 
     def _schedule_closing_order(self, ticker, side, qty, price, original_type="LOC"):
-        """15:25 KST에 깨어나 LOC/MOC 본연의 의도대로 발송.
-          LOC → 지정가 (가격 유지) / MOC → 시장가 (가격 0)"""
-        def _delayed():
-            kst = pytz.timezone('Asia/Seoul')
-            now = datetime.datetime.now(kst)
-            target = now.replace(hour=15, minute=25, second=0, microsecond=0)
-            if now < target:
-                wait = (target - now).total_seconds()
-                print(f"⏰ [Kiwoom 마감{original_type}] {ticker} {side} {qty}주 → {int(wait)}초 후 발송 예정")
-                time.sleep(wait)
-            if original_type == "MOC":
-                print(f"⏰ [Kiwoom 마감MOC] {ticker} {side} {qty}주 → 시장가 발송")
-                res = self.send_order(ticker, side, qty, 0, "MARKET")
-            else:  # LOC
-                print(f"⏰ [Kiwoom 마감LOC] {ticker} {side} {qty}주 @ {int(price):,}원 → LIMIT 발송")
-                res = self.send_order(ticker, side, qty, price, "LIMIT")
-            print(f"⏰ [Kiwoom 마감{original_type}] 결과: {res}")
-        threading.Thread(target=_delayed, daemon=True).start()
+        """LOC/MOC 주문을 디스크 큐(data/pending_orders_kiwoom.json) 에 기록.
+          실제 발송은 scheduler_trade_kr.scheduled_kr_closing_dispatch 가 15:25 KST 에 처리.
+          봇이 09:05 ~ 15:25 사이에 재시작돼도 지연 주문 유실 방지."""
+        _append_pending_order(ticker, side, qty, price, original_type)
 
     # 하위 호환성 — 예전 이름으로도 호출 가능
     _schedule_closing_limit_order = _schedule_closing_order
@@ -512,24 +558,98 @@ class KiwoomBroker:
 
     # ==========================================================
     # 미체결 / 체결내역
+    # ----------------------------------------------------------
+    # 호출부(scheduler_trade, telegram_bot)가 KIS 응답 포맷(sll_buy_dvsn_cd,
+    # odno, ft_ccld_qty, ft_ccld_unpr3, ord_tmd, ord_dvsn_cd, ord_unpr 등)을
+    # 참조하므로 키움 응답을 KIS-호환 dict 로 매핑해서 반환.
+    # Kiwoom trde_tp 값 매핑: '1'=매도 → '01', '2'=매수 → '02'
     # ==========================================================
+    @staticmethod
+    def _kiwoom_trde_tp_to_kis(v):
+        """Kiwoom trde_tp ('1'매도/'2'매수) → KIS sll_buy_dvsn_cd ('01'/'02')."""
+        s = str(v).strip()
+        if s in ('1', '01'):
+            return '01'  # 매도
+        if s in ('2', '02'):
+            return '02'  # 매수
+        return s or ''
+
     def get_unfilled_orders(self, ticker):
-        if not _API_IDS["UNFILLED_ORDERS"]:
-            return []
-        # TODO: UNFILLED_ORDERS api-id 매핑 후 구현
-        return []
+        details = self.get_unfilled_orders_detail(ticker)
+        return [d.get('odno') for d in details if d.get('odno')]
 
     def get_unfilled_orders_detail(self, ticker):
-        if not _API_IDS["UNFILLED_ORDERS"]:
+        """미체결 주문 리스트 반환. KIS-호환 포맷으로 매핑."""
+        body = {
+            "all_stk_tp": "1" if ticker else "0",
+            "trde_tp": "0",      # 0=전체
+            "stex_tp": "0",      # 0=KRX
+            "stk_cd": str(ticker) if ticker else "",
+        }
+        res = self._call_api(_API_IDS["UNFILLED_ORDERS"], _INQUIRY_PATH, "POST", body=body)
+        if res.get('return_code') != 0:
             return []
-        # TODO: 구현 — 반환 스펙: list[dict], sll_buy_dvsn_cd/odno/ord_dvsn_cd/ord_uv 포함
-        return []
+        raw_list = res.get('oso', []) or []
+        mapped = []
+        for item in raw_list:
+            stk_cd = str(item.get('stk_cd', '')).strip()
+            # 응답엔 종종 "A" 접두사가 붙어옴 — 요청 티커와 비교 시 정규화
+            norm_cd = stk_cd[1:] if stk_cd and stk_cd[0].isalpha() else stk_cd
+            if ticker and norm_cd != str(ticker):
+                continue
+            mapped.append({
+                'odno': str(item.get('ord_no', '')),
+                'pdno': norm_cd,
+                'sll_buy_dvsn_cd': self._kiwoom_trde_tp_to_kis(item.get('trde_tp', '')),
+                'ord_dvsn_cd': item.get('ord_stat', '') or item.get('ord_dvsn', ''),
+                'ord_dvsn': item.get('ord_stat', ''),
+                'ord_unpr': item.get('ord_uv', '0'),
+                'ovrs_ord_unpr': item.get('ord_uv', '0'),
+                'ft_ord_unpr3': item.get('ord_uv', '0'),
+                'ord_qty': item.get('ord_qty', '0'),
+                'rmnd_qty': item.get('rmnd_qty', item.get('oso_qty', '0')),
+                'stk_nm': item.get('stk_nm', ''),
+                '_raw': item,  # 디버그용 원본
+            })
+        return mapped
 
     def get_execution_history(self, ticker, start_date, end_date):
-        if not _API_IDS["EXEC_HISTORY"]:
+        """체결내역 리스트 반환 (지정 기간 중 특정 ticker). KIS-호환 포맷으로 매핑.
+          start_date/end_date: 'YYYYMMDD'. 키움 kt00009는 단일 일자 기반이라 start만 사용.
+          (여러 날이 필요하면 호출부가 loop — 원본 broker.get_genesis_ledger 패턴)"""
+        body = {
+            "stk_bond_tp": "0",            # 0=전체 (주식/채권)
+            "mrkt_tp": "0",                # 0=전체 시장
+            "sell_tp": "0",                # 0=전체 (매수/매도)
+            "qry_tp": "0",                 # 0=전체
+            "stk_cd": str(ticker) if ticker else "",
+            "ord_dt": str(start_date) if start_date else "",
+            "dmst_stex_tp": "KRX",
+        }
+        res = self._call_api(_API_IDS["EXEC_HISTORY"], _INQUIRY_PATH, "POST", body=body)
+        if res.get('return_code') != 0:
             return []
-        # TODO: 구현 — 반환 스펙: list[dict], sll_buy_dvsn_cd/ft_ccld_qty/ft_ccld_unpr3/ord_tmd/odno
-        return []
+        raw_list = res.get('acnt_ord_cntr_prst_array', []) or []
+        mapped = []
+        for item in raw_list:
+            stk_cd = str(item.get('stk_cd', '')).strip()
+            norm_cd = stk_cd[1:] if stk_cd and stk_cd[0].isalpha() else stk_cd
+            if ticker and norm_cd != str(ticker):
+                continue
+            cntr_qty = self._safe_float(item.get('cntr_qty', 0))
+            if cntr_qty <= 0:
+                continue  # 미체결 건(cnfm_qty만 있고 cntr_qty=0)은 제외
+            mapped.append({
+                'odno': str(item.get('ord_no', '')),
+                'pdno': norm_cd,
+                'sll_buy_dvsn_cd': self._kiwoom_trde_tp_to_kis(item.get('trde_tp', '')),
+                'ft_ccld_qty': item.get('cntr_qty', '0'),
+                'ft_ccld_unpr3': item.get('cntr_uv', '0'),
+                'ord_tmd': item.get('cntr_tm', ''),
+                'stk_nm': item.get('stk_nm', ''),
+                '_raw': item,
+            })
+        return mapped
 
     def get_genesis_ledger(self, ticker, limit_date_str=None):
         _, holdings = self.get_account_balance()
