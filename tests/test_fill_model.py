@@ -53,12 +53,12 @@ def test_limit_sell_no_fill_when_high_below():
     assert fill_price == 0.0
 
 
-def test_loc_buy_fills_when_close_at_or_below():
-    # P=1000, Close=990 ≤ P → 체결 at P
+def test_loc_buy_fills_at_close_when_close_at_or_below():
+    # P=1000, Close=990 ≤ P → 동시호가 청산가(Close) 에 체결 = 990
     bar = _bar(o=1010, h=1020, l=980, c=990)
     filled, fill_price = check_loc_fill(side="BUY", price=1000.0, bar=bar)
     assert filled is True
-    assert fill_price == 1000.0
+    assert fill_price == 990.0
 
 
 def test_loc_buy_no_fill_when_close_above():
@@ -68,11 +68,12 @@ def test_loc_buy_no_fill_when_close_above():
     assert fill_price == 0.0
 
 
-def test_loc_sell_fills_when_close_at_or_above():
+def test_loc_sell_fills_at_close_when_close_at_or_above():
+    # P=1000, Close=1010 ≥ P → 동시호가 청산가(Close) 에 체결 = 1010
     bar = _bar(o=990, h=1020, l=980, c=1010)
     filled, fill_price = check_loc_fill(side="SELL", price=1000.0, bar=bar)
     assert filled is True
-    assert fill_price == 1000.0
+    assert fill_price == 1010.0
 
 
 def test_loc_sell_no_fill_when_close_below():

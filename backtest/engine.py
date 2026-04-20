@@ -193,6 +193,69 @@ class BacktestEngine:
             "is_reverse": is_rev,
         })
 
+    def _phase_1700(self, d, bar):
+        """17:00 EOD — 매매 잠금 해제, 리버스 탈출/day++, 졸업 감지."""
+        self.cfg._sim_date = d
+        self.cfg.reset_locks()
+
+        # 1) 리버스 중이면 수익률 체크
+        rev_state = self.cfg.get_reverse_state(self.ticker)
+        if rev_state.get("is_active"):
+            qty, avg, _, _ = self.cfg.calculate_holdings(self.ticker)
+            close = bar["close"]
+            if avg > 0 and qty > 0:
+                curr_ret = (close - avg) / avg * 100.0
+                if curr_ret >= self.reverse_exit_threshold:
+                    # 🌤️ 리버스 확정 탈출
+                    self.cfg.set_reverse_state(self.ticker, False, 0, 0.0)
+                    try:
+                        self.cfg.clear_escrow_cash(self.ticker)
+                    except Exception:
+                        pass
+
+                    # ledger 의 is_reverse 플래그 일괄 False
+                    ledger = self.cfg.get_ledger()
+                    changed = False
+                    for r in ledger:
+                        if r.get("ticker") == self.ticker and r.get("is_reverse"):
+                            r["is_reverse"] = False
+                            changed = True
+                    if changed:
+                        self.cfg._save_json(self.cfg.FILES["LEDGER"], ledger)
+
+                    self.events.append({
+                        "day": d, "phase": "17:00", "kind": "reverse_exited",
+                        "curr_return": curr_ret, "threshold": self.reverse_exit_threshold,
+                    })
+                else:
+                    self.cfg.increment_reverse_day(self.ticker)
+                    new_state = self.cfg.get_reverse_state(self.ticker)
+                    self.events.append({
+                        "day": d, "phase": "17:00", "kind": "reverse_day_incremented",
+                        "new_day": new_state.get("day_count", 0),
+                        "curr_return": curr_ret,
+                    })
+
+        # 2) 졸업 감지 — 잔고 0 && 장부 양수
+        qty_after, _, _, _ = self.cfg.calculate_holdings(self.ticker)
+        ledger_after = self.cfg.get_ledger()
+        has_records = any(r["ticker"] == self.ticker for r in ledger_after)
+        if qty_after == 0 and has_records:
+            end_date = self._iso(d)
+            old_seed = self.cfg.get_seed(self.ticker)
+            new_hist, added_seed = self.cfg.archive_graduation(
+                self.ticker, end_date, bar["close"],
+            )
+            new_seed = self.cfg.get_seed(self.ticker)
+            if new_hist is not None:
+                self.events.append({
+                    "day": d, "phase": "17:00", "kind": "graduated",
+                    "profit": new_hist.get("profit", 0.0),
+                    "yield_pct": new_hist.get("yield", 0.0),
+                    "added_seed": added_seed,
+                    "old_seed": old_seed, "new_seed": new_seed,
+                })
+
     def run_day(self, d):
         bar = self._bar(d)
         if bar is None:
@@ -201,4 +264,5 @@ class BacktestEngine:
         self._phase_0905(d, bar)
         self._phase_limit_intraday(d, bar)
         self._phase_1525(d, bar)
+        self._phase_1700(d, bar)
         return list(self.events)[events_before:]

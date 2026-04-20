@@ -29,20 +29,22 @@ def check_limit_fill(side, price, bar):
 
 def check_loc_fill(side, price, bar):
     """
-    LOC 주문 체결 판정 (15:25 에 LIMIT 으로 변환돼 종가 경매까지 살아있다고 가정).
+    LOC 주문 체결 판정.
 
-    BUY:  Close ≤ P 면 체결 at P   (종가가 지정가 이하 → 체결 가능)
-    SELL: Close ≥ P 면 체결 at P
+    KRX 종가 동시호가(15:20-15:30)는 단일가 경매로 청산됨. 프로덕션은 15:25 에
+    LIMIT 으로 변환해 보내는데, 이 LIMIT 은 동시호가에 참여해 '청산가=Close' 에
+    체결됨. 즉 BUY LIMIT @ P 가 Close 위에 있어도 체결은 Close 에 일어남.
 
-    체결가는 항상 지정가 P (보수적: 마지막 5분 구간의 High/Low 부재).
+    BUY:  Close ≤ P 면 체결 at Close  (지정가보다 싼 단일가 청산 → 유리한 매수)
+    SELL: Close ≥ P 면 체결 at Close  (지정가보다 비싼 단일가 청산 → 유리한 매도)
     """
     if side == "BUY":
         if bar["close"] <= price:
-            return True, float(price)
+            return True, float(bar["close"])
         return False, 0.0
     if side == "SELL":
         if bar["close"] >= price:
-            return True, float(price)
+            return True, float(bar["close"])
         return False, 0.0
     raise ValueError(f"Unknown side: {side}")
 

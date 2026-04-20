@@ -70,3 +70,107 @@ def test_fill_updates_holdings(fresh_engine):
     qty, avg, _, _ = fresh_engine.cfg.calculate_holdings("418660")
     assert qty > 0
     assert avg > 0
+
+
+# ==========================================================
+# Task 6: 17:00 EOD — 리버스 진입/탈출/졸업
+# ==========================================================
+@pytest.fixture
+def reverse_cycle_ohlcv():
+    path = os.path.join(os.path.dirname(__file__), "fixtures", "ohlcv_reverse_cycle.json")
+    with open(path) as f:
+        return json.load(f)
+
+
+@pytest.fixture
+def graduation_ohlcv():
+    path = os.path.join(os.path.dirname(__file__), "fixtures", "ohlcv_graduation.json")
+    with open(path) as f:
+        return json.load(f)
+
+
+def _run_all(engine, ohlcv, start_date):
+    dates = sorted([datetime.date.fromisoformat(k) for k in ohlcv.keys()])
+    for d in [x for x in dates if x >= start_date]:
+        engine.run_day(d)
+
+
+def test_reverse_exit_mechanism_when_recovered(tmp_path, tiny_ohlcv):
+    """
+    메커니즘 테스트: 리버스 상태로 프리시드 + 가격이 avg 대비 -10% 이상 회복하면 탈출.
+    합성 fixture 의 가격 다이내믹이 리버스 진입 조건을 불안정하게 만들 수 있어,
+    탈출 로직만 독립 검증.
+    """
+    cfg = BacktestConfig(
+        sandbox_dir=str(tmp_path), ticker="418660",
+        seed=10_000_000, split=40, target_pct=7.0, compound_rate=70,
+    )
+    # 가상 보유: 100주 @ 11000원 (tiny_ohlcv 의 close 10000~10600 범위 → 수익률 -5% 정도)
+    cfg._sim_date = datetime.date(2025, 2, 17)
+    cfg.overwrite_incremental_ledger("418660", [], [{
+        "date": "2025-02-14", "side": "BUY", "price": 11000.0, "qty": 100,
+        "avg_price": 11000.0, "exec_id": "SEED", "desc": "테스트시드", "is_reverse": True,
+    }])
+    cfg.set_reverse_state("418660", is_active=True, day_count=3, exit_target=-20.0)
+
+    engine = BacktestEngine(
+        cfg=cfg, ticker="418660",
+        ohlcv=tiny_ohlcv, reverse_exit_threshold=-10.0,
+    )
+    # 2025-02-21 close=10550, avg=11000 → 수익률 = -4.09% ≥ -10% → 탈출해야 함
+    engine.run_day(datetime.date(2025, 2, 21))
+
+    exits = [e for e in engine.events if e["kind"] == "reverse_exited"]
+    assert len(exits) == 1, f"탈출 이벤트 정확히 1건 기대 — 실제 {len(exits)}건"
+    assert cfg.get_reverse_state("418660").get("is_active") is False
+
+
+def test_reverse_exit_skipped_when_return_below_threshold(tmp_path):
+    """수익률이 -10% 미만이면 탈출 안 하고 day 증가."""
+    ohlcv = {
+        "2025-02-17": {"open": 8000, "high": 8050, "low": 7900, "close": 7950, "volume": 100000},
+        "2025-02-18": {"open": 7950, "high": 8000, "low": 7800, "close": 7850, "volume": 100000},
+    }
+    cfg = BacktestConfig(
+        sandbox_dir=str(tmp_path), ticker="418660",
+        seed=10_000_000, split=40, target_pct=7.0, compound_rate=70,
+    )
+    cfg._sim_date = datetime.date(2025, 2, 17)
+    cfg.overwrite_incremental_ledger("418660", [], [{
+        "date": "2025-02-14", "side": "BUY", "price": 10000.0, "qty": 100,
+        "avg_price": 10000.0, "exec_id": "SEED", "desc": "테스트시드", "is_reverse": True,
+    }])
+    cfg.set_reverse_state("418660", is_active=True, day_count=1, exit_target=-20.0,
+                          last_update_date="2025-02-17")
+
+    engine = BacktestEngine(
+        cfg=cfg, ticker="418660",
+        ohlcv=ohlcv, reverse_exit_threshold=-10.0,
+    )
+    # 2025-02-18 close=7850, avg=10000 → 수익률 -21.5% < -10% → day++
+    engine.run_day(datetime.date(2025, 2, 18))
+
+    exits = [e for e in engine.events if e["kind"] == "reverse_exited"]
+    day_incs = [e for e in engine.events if e["kind"] == "reverse_day_incremented"]
+    assert len(exits) == 0
+    assert len(day_incs) == 1
+    assert cfg.get_reverse_state("418660").get("day_count") == 2
+
+
+def test_graduation_compounds_seed(tmp_path, graduation_ohlcv):
+    cfg = BacktestConfig(
+        sandbox_dir=str(tmp_path), ticker="418660",
+        seed=10_000_000, split=40, target_pct=7.0, compound_rate=70,
+    )
+    engine = BacktestEngine(
+        cfg=cfg, ticker="418660",
+        ohlcv=graduation_ohlcv, reverse_exit_threshold=-10.0,
+    )
+    _run_all(engine, graduation_ohlcv, datetime.date(2025, 2, 18))
+
+    grads = [e for e in engine.events if e["kind"] == "graduated"]
+    assert len(grads) >= 1, "졸업 이벤트 없음"
+    first = grads[0]
+    assert first["profit"] > 0
+    assert first["added_seed"] > 0
+    assert first["new_seed"] > first["old_seed"]
