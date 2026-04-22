@@ -594,9 +594,11 @@ class TelegramController:
                 now_market = datetime.datetime.now(_tz)
                 _cal = mc.get_calendar()
                 schedule = _cal.schedule(start_date=(now_market - datetime.timedelta(days=10)).date(), end_date=now_market.date())
-                
-                if not schedule.empty:
-                    last_trade_date = schedule.index[-1]
+
+                # 장 마감 전 호출 (예: 다음날 09:30 KST /record) 시 '전 거래일'을 선택해
+                # target_ledger_str 이 실제 거래일과 일치하도록 보정.
+                last_trade_date = mc.pick_target_trade_date(schedule, now_market, mc.market_close_time())
+                if last_trade_date is not None:
                     target_kis_str = last_trade_date.strftime('%Y%m%d')
                     target_ledger_str = last_trade_date.strftime('%Y-%m-%d')
                 else:

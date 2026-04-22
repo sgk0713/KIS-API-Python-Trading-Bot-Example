@@ -75,6 +75,24 @@ def is_trading_day(date=None):
         return date.weekday() < 5
 
 
+def pick_target_trade_date(schedule, now_market, close_time):
+    """호출 시각과 장 마감 시각을 비교해 '타깃 거래일' 결정.
+    - 오늘이 거래일 + 마감 전: 전 거래일 (index[-2])
+    - 오늘이 거래일 + 마감 후: 오늘 (index[-1])
+    - 오늘이 비거래일 (주말/휴장): schedule 마지막 = 마지막 거래일 그대로
+    - schedule 비었으면 None
+
+    KR `/record` 가 다음날 아침에 호출돼도 실제 거래일 기준으로 체결내역을
+    조회·기록하도록 만드는 핵심 로직."""
+    if schedule is None or len(schedule) == 0:
+        return None
+    last = schedule.index[-1]
+    is_today_trading = last.date() == now_market.date()
+    if is_today_trading and now_market.time() < close_time and len(schedule) >= 2:
+        return schedule.index[-2]
+    return last
+
+
 # ==========================================================
 # Market hours (시장 타임존 기준)
 # ==========================================================
