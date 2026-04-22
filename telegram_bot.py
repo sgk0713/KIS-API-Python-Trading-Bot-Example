@@ -754,21 +754,28 @@ class TelegramController:
                     new_target_records = []
                     
                     if target_execs:
-                        target_execs.sort(key=lambda x: x.get('ord_tmd', '000000')) 
+                        target_execs.sort(key=lambda x: x.get('ord_tmd', '000000'))
                         for ex in target_execs:
                             side_cd = ex.get('sll_buy_dvsn_cd')
                             exec_qty = int(float(ex.get('ft_ccld_qty', '0')))
                             exec_price = float(ex.get('ft_ccld_unpr3', '0'))
-                            
-                            if side_cd == "02": 
+
+                            if side_cd == "02":
+                                side_label = "BUY"
                                 new_avg = ((temp_sim_qty * temp_sim_avg) + (exec_qty * exec_price)) / (temp_sim_qty + exec_qty) if (temp_sim_qty + exec_qty) > 0 else exec_price
                                 temp_sim_qty += exec_qty
                                 temp_sim_avg = new_avg
-                            else:
+                            elif side_cd == "01":
+                                side_label = "SELL"
                                 temp_sim_qty -= exec_qty
-                                
+                            else:
+                                # 매수/매도 구분 불명 — 환상의 SELL 이 찍히지 않도록 제외,
+                                # 차이분은 뒤이은 CALIB 이 흡수
+                                logging.warning(f"[{ticker}] sync: 구분 불명 체결 제외 (side_cd={side_cd!r}) raw={ex.get('_raw')}")
+                                continue
+
                             new_target_records.append({
-                                'date': target_ledger_str, 'side': "BUY" if side_cd == "02" else "SELL",
+                                'date': target_ledger_str, 'side': side_label,
                                 'qty': exec_qty, 'price': exec_price, 'avg_price': temp_sim_avg
                             })
                             
