@@ -25,3 +25,7 @@ KIWOOM_ACCOUNT_NO=여기에_계좌번호
 
 # 모의투자 사용 여부 (1 = 모의투자 mockapi.kiwoom.com, 0 = 운영 api.kiwoom.com)
 KIWOOM_IS_MOCK=1
+
+# ETF/ETN 호가 5원 특례 강제 적용 티커 (CSV, 생략 시 기본 "418660")
+# ka10001 stk_nm 자동판별 실패 시 보강용 — 신규 ETF 운용 개시 시 여기에 추가
+KIWOOM_ETF_TICKERS=418660

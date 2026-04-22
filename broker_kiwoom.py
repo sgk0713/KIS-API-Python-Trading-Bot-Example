@@ -289,21 +289,55 @@ class KiwoomBroker:
         self._yf_sym_cache[t] = chosen
         return chosen
 
-    def _round_to_krw_tick(self, price, side=None):
+    def _is_etf(self, ticker):
+        """ETF/ETN 여부 판별 — 호가단위 5원 특례 적용 대상.
+        우선순위:
+          1) env `KIWOOM_ETF_TICKERS` (CSV, 기본 "418660") 에 포함 → True
+          2) 인스턴스 캐시 히트
+          3) ka10001 stk_nm 에 "ETF"/"ETN" 포함 여부 → 캐시 저장
+          4) 미상 → False (일반주 호가표로 안전 폴백)"""
+        if not ticker:
+            return False
+        t = str(ticker).strip()
+        raw = os.getenv("KIWOOM_ETF_TICKERS", "418660")
+        override = {s.strip() for s in raw.split(",") if s.strip()}
+        if t in override:
+            return True
+        if not hasattr(self, "_etf_cache"):
+            self._etf_cache = {}
+        if t in self._etf_cache:
+            return self._etf_cache[t]
+        try:
+            info = self._kiwoom_stock_basic(t)
+        except Exception:
+            info = None
+        is_etf = False
+        if info:
+            name = str(info.get("stk_nm", "")).upper()
+            if "ETF" in name or "ETN" in name:
+                is_etf = True
+        self._etf_cache[t] = is_etf
+        return is_etf
+
+    def _round_to_krw_tick(self, price, side=None, ticker=None):
         """KRX 가격대별 호가단위로 반올림.
         side='SELL' → 올림 (ceil)    매도자 유리, 목표가 상승 방향
-        side='BUY' / None → 내림 (floor) 매수자 유리, 지정가 하락 방향"""
+        side='BUY' / None → 내림 (floor) 매수자 유리, 지정가 하락 방향
+        ticker 가 ETF/ETN 이면 가격대 무관 5원 tick (KRX 특례)."""
         if price is None or price <= 0:
             return 0
         p = float(price)
-        pi = int(p)
-        if pi < 2000:      tick = 1
-        elif pi < 5000:    tick = 5
-        elif pi < 20000:   tick = 10
-        elif pi < 50000:   tick = 50
-        elif pi < 200000:  tick = 100
-        elif pi < 500000:  tick = 500
-        else:              tick = 1000
+        if ticker and self._is_etf(ticker):
+            tick = 5
+        else:
+            pi = int(p)
+            if pi < 2000:      tick = 1
+            elif pi < 5000:    tick = 5
+            elif pi < 20000:   tick = 10
+            elif pi < 50000:   tick = 50
+            elif pi < 200000:  tick = 100
+            elif pi < 500000:  tick = 500
+            else:              tick = 1000
         if side == "SELL":
             return int(math.ceil(p / tick)) * tick
         return int(p // tick) * tick
@@ -443,11 +477,11 @@ class KiwoomBroker:
     def get_ask_price(self, ticker):
         """매도 1호가. 키움 호가 TR 미매핑 상태에선 현재가 근처로 추정."""
         p = self.get_current_price(ticker)
-        return float(self._round_to_krw_tick(p)) if p > 0 else 0.0
+        return float(self._round_to_krw_tick(p, ticker=ticker)) if p > 0 else 0.0
 
     def get_bid_price(self, ticker):
         p = self.get_current_price(ticker)
-        return float(self._round_to_krw_tick(p)) if p > 0 else 0.0
+        return float(self._round_to_krw_tick(p, ticker=ticker)) if p > 0 else 0.0
 
     def get_current_5min_candle(self, ticker):
         try:
@@ -532,7 +566,7 @@ class KiwoomBroker:
             final_price = 0  # 시장가는 가격 없음
         else:  # LIMIT 및 그 외 모든 케이스
             ord_dvsn = _KRX_ORD_LIMIT  # "00"
-            final_price = self._round_to_krw_tick(price, side=side)
+            final_price = self._round_to_krw_tick(price, side=side, ticker=ticker)
 
         body = {
             "dmst_stex_tp": "KRX",
