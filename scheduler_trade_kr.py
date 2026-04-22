@@ -276,6 +276,54 @@ async def scheduled_kr_closing_dispatch(context):
     await context.bot.send_message(chat_id=chat_id, text='\n'.join(lines), parse_mode='HTML')
 
 
+async def scheduled_kr_post_close_sync(context):
+    """15:40 KST — KRX 마감 10분 후 자동 장부 동기화 (체결내역 소급 교정 포함).
+
+    08:45 KST `scheduled_kr_auto_sync` 는 경량(졸업·평단교정)만 수행하므로,
+    15:25 dispatch → 15:30 마감 → 체결 확정된 LOC/MOC 주문의 실체결 단가·수량을
+    '거래 당일' 내에 장부에 반영하려면 bot.process_auto_sync 전체 경로가 필요.
+
+    마감 당일 호출이므로 process_auto_sync 의 last_trade_date 가 정확히 오늘로
+    잡혀 target_ledger_str 가 실제 거래일과 일치. 다음날 /record 를 눌러도
+    날짜가 미끄러지지 않게 하는 1차 방어막."""
+    now = datetime.datetime.now(_KST)
+    chat_id = context.job.chat_id
+
+    if not is_kr_trading_day():
+        return
+
+    app_data = context.job.data
+    cfg = app_data['cfg']
+    bot = app_data['bot']
+    broker = app_data['broker']
+    tx_lock = app_data['tx_lock']
+
+    status_msg = await context.bot.send_message(
+        chat_id=chat_id,
+        text=f"📝 <b>[{now.strftime('%H:%M')}] 마감 후 장부 동기화 시작</b>",
+        parse_mode='HTML',
+    )
+
+    success_tickers = []
+    for t in cfg.get_active_tickers():
+        res = await bot.process_auto_sync(t, chat_id, context, silent_ledger=True)
+        if res == "SUCCESS":
+            success_tickers.append(t)
+
+    if success_tickers:
+        async with tx_lock:
+            _, holdings = broker.get_account_balance()
+        await bot._display_ledger(
+            success_tickers[0], chat_id, context,
+            message_obj=status_msg, pre_fetched_holdings=holdings,
+        )
+    else:
+        await status_msg.edit_text(
+            "📝 <b>마감 후 장부 동기화 완료</b> (표시할 진행 중인 장부가 없습니다)",
+            parse_mode='HTML',
+        )
+
+
 async def scheduled_kr_auto_sync(context):
     """
     KRX 개장 직전(08:45 KST) 장부-잔고 자동 동기화.

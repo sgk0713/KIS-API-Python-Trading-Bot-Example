@@ -281,6 +281,7 @@ def main():
                 scheduled_kr_auto_sync,
                 scheduled_kr_force_reset,
                 scheduled_kr_closing_dispatch,
+                scheduled_kr_post_close_sync,
             )
             # 08:45 KST — 장부 자동 동기화 (졸업 감지 + 평단가 교정)
             jq.run_daily(
@@ -306,6 +307,14 @@ def main():
                 chat_id=cfg.get_chat_id(),
                 data=app_data,
             )
+            # 15:40 KST — 마감 후 장부 동기화 (체결내역 소급 교정 / 당일 날짜로 기록)
+            jq.run_daily(
+                scheduled_kr_post_close_sync,
+                time=datetime.time(15, 40, tzinfo=kst),
+                days=(0, 1, 2, 3, 4),
+                chat_id=cfg.get_chat_id(),
+                data=app_data,
+            )
             # 17:00 KST — 일일 초기화 & 리버스 관리 (매매 잠금 해제, day_count 증가, 탈출 체크)
             jq.run_daily(
                 scheduled_kr_force_reset,
@@ -314,7 +323,7 @@ def main():
                 chat_id=cfg.get_chat_id(),
                 data=app_data,
             )
-            print("ℹ️  [스케줄러] KIWOOM 모드 — 08:45 sync + 09:05 장전 + 15:25 마감 dispatch + 17:00 force_reset")
+            print("ℹ️  [스케줄러] KIWOOM 모드 — 08:45 sync + 09:05 장전 + 15:25 dispatch + 15:40 post-close sync + 17:00 force_reset")
             print("   US 전용 스케줄러(volatility_scan / vwap / sniper / after-market 등)는 미등록")
         else:
             # === KIS 전용 (기존 동작 유지) ===
