@@ -637,17 +637,30 @@ class KiwoomBroker:
     # 호출부(scheduler_trade, telegram_bot)가 KIS 응답 포맷(sll_buy_dvsn_cd,
     # odno, ft_ccld_qty, ft_ccld_unpr3, ord_tmd, ord_dvsn_cd, ord_unpr 등)을
     # 참조하므로 키움 응답을 KIS-호환 dict 로 매핑해서 반환.
-    # Kiwoom trde_tp 값 매핑: '1'=매도 → '01', '2'=매수 → '02'
+    #
+    # ⚠️ kt00009 응답에서 매수/매도는 `io_tp_nm` ("현금매수"/"현금매도" 등 한국어)
+    #    에 들어있고, `trde_tp` 는 주문종류("시장가"/"지정가") 라는 별개 필드다.
+    #    과거 `trde_tp` 를 side 로 오인해 읽은 탓에 BUY 체결이 SELL 로 기록되는
+    #    장부 오염이 발생했다. side 해석은 반드시 `_kiwoom_side_to_kis` 로.
     # ==========================================================
     @staticmethod
-    def _kiwoom_trde_tp_to_kis(v):
-        """Kiwoom trde_tp ('1'매도/'2'매수) → KIS sll_buy_dvsn_cd ('01'/'02')."""
-        s = str(v).strip()
+    def _kiwoom_side_to_kis(v):
+        """Kiwoom 매수/매도 값 → KIS sll_buy_dvsn_cd ('01'=매도, '02'=매수).
+        인식 불가 값은 빈 문자열 반환 (호출부가 SELL 로 미끄러지지 않도록)."""
+        s = str(v or '').strip()
+        if not s:
+            return ''
         if s in ('1', '01'):
-            return '01'  # 매도
+            return '01'
         if s in ('2', '02'):
-            return '02'  # 매수
-        return s or ''
+            return '02'
+        # 부호 프리픽스 제거 후 한국어 판정 ("현금매수", "신용매도", "+매수" 등)
+        stripped = s.lstrip('+-').strip()
+        if '매도' in stripped or stripped in ('S', 'SELL', 'sell'):
+            return '01'
+        if '매수' in stripped or stripped in ('B', 'BUY', 'buy'):
+            return '02'
+        return ''
 
     def get_unfilled_orders(self, ticker):
         details = self.get_unfilled_orders_detail(ticker)
@@ -672,10 +685,20 @@ class KiwoomBroker:
             norm_cd = stk_cd[1:] if stk_cd and stk_cd[0].isalpha() else stk_cd
             if ticker and norm_cd != str(ticker):
                 continue
+            # 미체결 응답(oso)의 side 후보. 미확인 엔드포인트이므로 한국어 우선.
+            side_cd = ''
+            for key in ('io_tp_nm', 'io_tp', 'sll_buy_dvsn_cd_nm',
+                        'sll_buy_dvsn_cd', 'sll_buy_tp', 'sell_tp'):
+                raw_side = item.get(key)
+                if raw_side in (None, ''):
+                    continue
+                side_cd = self._kiwoom_side_to_kis(raw_side)
+                if side_cd:
+                    break
             mapped.append({
                 'odno': str(item.get('ord_no', '')),
                 'pdno': norm_cd,
-                'sll_buy_dvsn_cd': self._kiwoom_trde_tp_to_kis(item.get('trde_tp', '')),
+                'sll_buy_dvsn_cd': side_cd,
                 'ord_dvsn_cd': item.get('ord_stat', '') or item.get('ord_dvsn', ''),
                 'ord_dvsn': item.get('ord_stat', ''),
                 'ord_unpr': item.get('ord_uv', '0'),
@@ -714,10 +737,30 @@ class KiwoomBroker:
             cntr_qty = self._safe_float(item.get('cntr_qty', 0))
             if cntr_qty <= 0:
                 continue  # 미체결 건(cnfm_qty만 있고 cntr_qty=0)은 제외
+
+            # kt00009 spec: side 는 `io_tp_nm` 의 한국어("현금매수"/"현금매도" 등).
+            # `trde_tp` 는 "시장가"/"지정가" 주문종류이므로 side 로 쓰면 안 됨.
+            # 다른 유사 엔드포인트 호환을 위해 몇 개 후보를 추가로 둠.
+            side_cd = ''
+            for key in ('io_tp_nm', 'io_tp', 'sll_buy_dvsn_cd_nm',
+                        'sll_buy_dvsn_cd', 'sll_buy_tp', 'sell_tp'):
+                raw_side = item.get(key)
+                if raw_side in (None, ''):
+                    continue
+                side_cd = self._kiwoom_side_to_kis(raw_side)
+                if side_cd:
+                    break
+            if not side_cd:
+                import logging as _lg
+                _lg.warning(
+                    "[kt00009] 매수/매도 구분 판정 실패 — 해당 체결 제외. raw=%s",
+                    item,
+                )
+                continue
             mapped.append({
                 'odno': str(item.get('ord_no', '')),
                 'pdno': norm_cd,
-                'sll_buy_dvsn_cd': self._kiwoom_trde_tp_to_kis(item.get('trde_tp', '')),
+                'sll_buy_dvsn_cd': side_cd,
                 'ft_ccld_qty': item.get('cntr_qty', '0'),
                 'ft_ccld_unpr3': item.get('cntr_uv', '0'),
                 'ord_tmd': item.get('cntr_tm', ''),
