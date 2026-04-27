@@ -287,7 +287,7 @@ def main():
             jq.run_daily(
                 scheduled_kr_auto_sync,
                 time=datetime.time(8, 45, tzinfo=kst),
-                days=(0, 1, 2, 3, 4),
+                days=(1, 2, 3, 4, 5),
                 chat_id=cfg.get_chat_id(),
                 data=app_data,
             )
@@ -295,7 +295,7 @@ def main():
             jq.run_daily(
                 scheduled_kr_regular_trade,
                 time=datetime.time(9, 5, tzinfo=kst),
-                days=(0, 1, 2, 3, 4),
+                days=(1, 2, 3, 4, 5),
                 chat_id=cfg.get_chat_id(),
                 data=app_data,
             )
@@ -303,7 +303,7 @@ def main():
             jq.run_daily(
                 scheduled_kr_closing_dispatch,
                 time=datetime.time(15, 25, tzinfo=kst),
-                days=(0, 1, 2, 3, 4),
+                days=(1, 2, 3, 4, 5),
                 chat_id=cfg.get_chat_id(),
                 data=app_data,
             )
@@ -311,7 +311,7 @@ def main():
             jq.run_daily(
                 scheduled_kr_post_close_sync,
                 time=datetime.time(15, 40, tzinfo=kst),
-                days=(0, 1, 2, 3, 4),
+                days=(1, 2, 3, 4, 5),
                 chat_id=cfg.get_chat_id(),
                 data=app_data,
             )
@@ -319,7 +319,7 @@ def main():
             jq.run_daily(
                 scheduled_kr_force_reset,
                 time=datetime.time(17, 0, tzinfo=kst),
-                days=(0, 1, 2, 3, 4),
+                days=(1, 2, 3, 4, 5),
                 chat_id=cfg.get_chat_id(),
                 data=app_data,
             )
@@ -331,20 +331,20 @@ def main():
             jq.run_daily(scheduled_auto_sync_winter, time=datetime.time(9, 30, tzinfo=kst), days=tuple(range(7)), chat_id=cfg.get_chat_id(), data=app_data)
 
             for hour in [17, 18]:
-                jq.run_daily(scheduled_force_reset, time=datetime.time(hour, 0, tzinfo=kst), days=(0,1,2,3,4), chat_id=cfg.get_chat_id(), data=app_data)
+                jq.run_daily(scheduled_force_reset, time=datetime.time(hour, 0, tzinfo=kst), days=(1,2,3,4,5), chat_id=cfg.get_chat_id(), data=app_data)
 
-            jq.run_daily(scheduled_volatility_scan, time=datetime.time(10, 20, tzinfo=est), days=(0,1,2,3,4), chat_id=cfg.get_chat_id(), data=app_data)
+            jq.run_daily(scheduled_volatility_scan, time=datetime.time(10, 20, tzinfo=est), days=(1,2,3,4,5), chat_id=cfg.get_chat_id(), data=app_data)
 
             # 실전 전투 매매 스케줄러 (trade)
             for hour in [17, 18]:
-                jq.run_daily(scheduled_regular_trade, time=datetime.time(hour, 5, tzinfo=kst), days=(0,1,2,3,4), chat_id=cfg.get_chat_id(), data=app_data)
+                jq.run_daily(scheduled_regular_trade, time=datetime.time(hour, 5, tzinfo=kst), days=(1,2,3,4,5), chat_id=cfg.get_chat_id(), data=app_data)
 
-            jq.run_daily(scheduled_vwap_init_and_cancel, time=datetime.time(15, 30, tzinfo=est), days=(0,1,2,3,4), chat_id=cfg.get_chat_id(), data=app_data)
+            jq.run_daily(scheduled_vwap_init_and_cancel, time=datetime.time(15, 30, tzinfo=est), days=(1,2,3,4,5), chat_id=cfg.get_chat_id(), data=app_data)
 
             jq.run_repeating(scheduled_sniper_monitor, interval=60, chat_id=cfg.get_chat_id(), data=app_data)
             jq.run_repeating(scheduled_vwap_trade, interval=60, chat_id=cfg.get_chat_id(), data=app_data)
 
-            jq.run_daily(scheduled_after_market_lottery, time=datetime.time(16, 5, tzinfo=est), days=(0,1,2,3,4), chat_id=cfg.get_chat_id(), data=app_data)
+            jq.run_daily(scheduled_after_market_lottery, time=datetime.time(16, 5, tzinfo=est), days=(1,2,3,4,5), chat_id=cfg.get_chat_id(), data=app_data)
         
     app.run_polling()
 
