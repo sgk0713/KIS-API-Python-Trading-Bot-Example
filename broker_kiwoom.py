@@ -105,7 +105,7 @@ _API_IDS = {
     "ORDER_AMEND":      "kt10002",
     "ORDER_CANCEL":     "kt10003",
     # ✅ 계좌 계열 (URI: /api/dostk/acnt)
-    "BALANCE_CASH":     "kt00001",  # 예수금상세 → ord_alow_amt
+    "BALANCE_CASH":     "kt00001",  # 예수금상세 → d2_entra (D+2 예수금)
     "BALANCE_HOLDINGS": "kt00018",  # 계좌평가잔고 → acnt_evlt_remn_indv_tot[]
     "UNFILLED_ORDERS":  "ka10075",  # 미체결 주문 조회 → oso[]
     "EXEC_HISTORY":     "kt00009",  # 체결내역 → acnt_ord_cntr_prst_array[]
@@ -353,11 +353,13 @@ class KiwoomBroker:
         cash = 0.0
         holdings = {}
 
-        # 1) 예수금상세 (kt00001) — 주문가능금액
+        # 1) 예수금상세 (kt00001) — D+2 예수금 (실제 주문 가능 현금)
+        # ord_alow_amt 필드는 키움 응답상 사실상 인출가능금액에 해당해 결제 사이클 동안
+        # 실제 주문 여력과 어긋나므로, D+2 예수금(d2_entra)을 사용한다.
         res_cash = self._call_api(_API_IDS["BALANCE_CASH"], _INQUIRY_PATH, "POST", body={"qry_tp": "1"})
         if res_cash.get('return_code') == 0:
             api_success = True
-            cash = self._safe_float(res_cash.get('ord_alow_amt', 0))
+            cash = self._safe_float(res_cash.get('d2_entra', 0))
 
         # 2) 계좌평가잔고 (kt00018) — 보유종목 리스트
         res_hold = self._call_api(_API_IDS["BALANCE_HOLDINGS"], _INQUIRY_PATH, "POST", body={"qry_tp": "1", "dmst_stex_tp": "KRX"})
